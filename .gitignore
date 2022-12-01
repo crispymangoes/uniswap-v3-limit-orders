@@ -1,0 +1,26 @@
+# Foundry
+cache/
+out/
+broadcast/
+
+# Environment variables!
+.env
+.env.prod
+
+# JS
+node_modules/
+
+# Hardhat files
+cache_hardhat/
+artifacts/
+
+# Hardhat plugin files
+typechain-types/
+
+# Flattened files
+flattened.txt
+
+# Package Manager files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
