@@ -59,10 +59,11 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface {
 
     // Using the below struct values and the userData array, we can figure out how much a user is owed.
     struct Claim {
+        uint256 userDataId;
         uint128 token0Amount; //Can either be the deposit amount or the amount got out of liquidity changing to the other token
         uint128 token1Amount;
-        uint128 totalFee; // Fee in terms of LINK or the network token.
-        bool token0OrToken1; //Determines the token out
+        uint128 totalFee; // Fee in terms of network native asset.
+        bool direction; //Determines the token out
     }
 
     // How users claim their tokens, just need to pass in the uint128 userDataId
@@ -267,6 +268,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface {
         if (poolToData[pool].center == 0) poolToData[pool].center = positionId;
         else {
             // TODO check if newly added range is closer to current tick than last center, and if it is then adjust it.
+            // This logic should update the center to be the position that is closest to the current tick, but also has a tick range greater than the current tick
         }
     }
 
@@ -387,6 +389,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface {
         // Supply liquidity to pool.
         (uint256 tokenId, , uint256 amount0Act, uint256 amount1Act) = positionManager.mint(params);
 
+        if (tokenId == 0) revert("Zero Token Id not valid");
+
         if (amount0Act != amount0 || amount1Act != amount1) revert("Did not use full amount");
 
         return tokenId;
@@ -420,7 +424,92 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface {
         if (amount0Act != amount0 || amount1Act != amount1) revert("Did not use full amount");
     }
 
-    function checkUpkeep(bytes calldata checkData) external returns (bool upkeepNeeded, bytes memory performData) {}
+    uint256 private constant MAX_FILLS_PER_UPKEEP = 10;
 
-    function performUpkeep(bytes calldata performData) external {}
+    // TODO should we add an ITM tick buffer? So that orders must be ITM by atleast buffer ticks.
+    function checkUpkeep(bytes calldata checkData) external view returns (bool upkeepNeeded, bytes memory performData) {
+        uint256[MAX_FILLS_PER_UPKEEP] memory ordersToFulfill;
+        uint256 fillCount;
+        bool walkDirection;
+        // Check if pool center is ITM.
+        IUniswapV3Pool pool = abi.decode(checkData, (IUniswapV3Pool));
+        uint256 target = poolToData[pool].center;
+        (, int24 currentTick, , , , , ) = pool.slot0();
+        Order memory order = orderLinkedList[poolToData[pool].center];
+        OrderStatus status = _getOrderStatus(currentTick, order.tickLower, order.tickUpper, order.direction);
+        if (status == OrderStatus.ITM) {
+            ordersToFulfill[0] = target;
+            fillCount++;
+            walkDirection = true; // Walk towards head of list.
+        } else {
+            walkDirection = false;
+        }
+        target = walkDirection ? order.head : order.tail;
+        while (target != 0 && fillCount < MAX_FILLS_PER_UPKEEP) {
+            order = orderLinkedList[target];
+            // Check if target is ITM.
+            status = _getOrderStatus(currentTick, order.tickLower, order.tickUpper, order.direction);
+            if (status == OrderStatus.ITM) {
+                ordersToFulfill[fillCount] = target;
+                fillCount++;
+                target = walkDirection ? order.head : order.tail;
+            } else {
+                // No more orders need to be filled.
+                break;
+            }
+        }
+
+        // Check if there are any orders to fill.
+        if (fillCount > 0) {
+            upkeepNeeded = true;
+            performData = abi.encode(pool, ordersToFulfill);
+        }
+    }
+
+    uint256 public upkeepGasLimit = 100_000;
+
+    /// @dev premium should be factored into this value.
+    function setUpkeepGasLimit(uint256 gasLimit) external onlyOwner {
+        upkeepGasLimit = gasLimit;
+    }
+
+    uint256 public upkeepGasPrice = 100_000;
+
+    function setUpkeepGasPrice(uint256 gasPrice) external onlyOwner {
+        upkeepGasPrice = gasPrice;
+    }
+
+    function performUpkeep(bytes calldata performData) external {
+        (IUniswapV3Pool pool, uint256[MAX_FILLS_PER_UPKEEP] memory ordersToFulfill) = abi.decode(
+            performData,
+            (IUniswapV3Pool, uint256[10])
+        );
+
+        // Estimate gas cost.
+        uint256 estimatedFee = upkeepGasLimit * upkeepGasPrice;
+
+        // Fulfill orders.
+        (, int24 currentTick, , , , , ) = pool.slot0();
+        bool orderFilled;
+        for (uint256 i; i < MAX_FILLS_PER_UPKEEP; ++i) {
+            uint256 target = ordersToFulfill[i];
+            if (target == 0) break;
+            Order storage order = orderLinkedList[target];
+            OrderStatus status = _getOrderStatus(currentTick, order.tickLower, order.tickUpper, order.direction);
+            if (status == OrderStatus.ITM) {
+                _fulfillOrder(order, estimatedFee);
+                orderFilled = true;
+            }
+        }
+
+        if (!orderFilled) revert("No orders filled!");
+    }
+
+    function _fulfillOrder(Order storage order, uint256 estimatedFee) internal {
+        // Save fee per user in Claim Struct.
+        uint256 userDataId;
+        uint128 token0Amount; //Can either be the deposit amount or the amount got out of liquidity changing to the other token
+        uint128 token1Amount;
+        uint128 totalFee; // Fee in terms of network native asset.
+    }
 }
