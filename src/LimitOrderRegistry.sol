@@ -7,8 +7,11 @@ import { AutomationCompatibleInterface } from "@chainlink/contracts/src/v0.8/int
 import { Owned } from "@solmate/auth/Owned.sol";
 import { UniswapV3Pool as IUniswapV3Pool } from "src/interfaces/uniswapV3/UniswapV3Pool.sol";
 import { NonfungiblePositionManager as INonfungiblePositionManager } from "src/interfaces/uniswapV3/NonfungiblePositionManager.sol";
+import { ERC721Holder } from "@openzeppelin/contracts/token/ERC721/utils/ERC721Holder.sol";
 
-contract LimitOrderRegistry is Owned, AutomationCompatibleInterface {
+import { console } from "@forge-std/Test.sol";
+
+contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holder {
     using SafeTransferLib for ERC20;
 
     INonfungiblePositionManager public immutable positionManager;
@@ -19,7 +22,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface {
 
     // Stores the last saved center position of the orderLinkedList based off an input UniV3 pool
     struct PoolData {
-        uint256 center;
+        uint256 centerHead;
+        uint256 centerTail;
         ERC20 token0;
         ERC20 token1;
         uint128 token0Fees; // Swap fees from input token, withdrawable by admin
@@ -111,12 +115,14 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface {
     // TODO
     function setupLimitOrder(IUniswapV3Pool pool, uint256 initialUpkeepFunds) external {
         // Check if Limit Order is already setup for `pool`.
+        initialUpkeepFunds += 1;
 
         // Create Upkeep.
 
         // poolToData
         poolToData[pool] = PoolData({
-            center: 0,
+            centerHead: 0,
+            centerTail: 0,
             token0: ERC20(pool.token0()),
             token1: ERC20(pool.token1()),
             token0Fees: 0,
@@ -199,8 +205,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface {
         // Transfer assets into contract before setting any state.
         {
             ERC20 assetIn;
-            if (direction) assetIn = poolToData[pool].token1;
-            else assetIn = poolToData[pool].token0;
+            if (direction) assetIn = poolToData[pool].token0;
+            else assetIn = poolToData[pool].token1;
             _enforceMinimumLiquidity(amount, assetIn);
             assetIn.safeTransferFrom(msg.sender, address(this), amount);
         }
@@ -209,8 +215,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface {
         uint256 positionId = getPositionFromTicks[lower][upper];
         uint128 amount0;
         uint128 amount1;
-        if (direction) amount1 = amount;
-        else amount0 = amount;
+        if (direction) amount0 = amount;
+        else amount1 = amount;
         if (positionId == 0) {
             // Create new LP position(which adds liquidity)
             positionId = _mintPosition(pool, upper, lower, amount0, amount1, direction);
@@ -247,6 +253,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface {
                 _addPositionToList(proposedTail, proposedHead, positionId);
                 //  create a new userDataId, direction.
                 _setupOrder(direction, positionId);
+
                 // Need to add liquidity,
                 _addToPosition(pool, positionId, amount0, amount1, direction);
                 // update token0Amount, token1Amount, userData array(checking if user is already in it).
@@ -276,21 +283,31 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface {
         int24 lower
     ) internal {
         // If the center is not set for the pool, then positionId is the new center.
-        uint256 center = poolToData[pool].center;
-        if (center == 0) poolToData[pool].center = positionId;
+        uint256 centerHead = poolToData[pool].centerHead;
+        uint256 centerTail = poolToData[pool].centerTail;
+        if (lower > currentTick && centerHead == 0) {
+            poolToData[pool].centerHead = positionId;
+        } else if (upper < currentTick && centerTail == 0) poolToData[pool].centerTail = positionId;
         else {
             // Check if center or center tail is ITM, if so revert, see notice.
-            Order memory centerOrder = orderLinkedList[center];
-            OrderStatus status = _getOrderStatus(
-                currentTick,
-                centerOrder.tickLower,
-                centerOrder.tickUpper,
-                centerOrder.direction
-            );
-            if (status == OrderStatus.ITM) revert("User can not update center while orders are ITM.");
-            if (centerOrder.tail != 0) {
-                Order memory centerTail = orderLinkedList[centerOrder.tail];
-                status = _getOrderStatus(currentTick, centerTail.tickLower, centerTail.tickUpper, centerTail.direction);
+            Order memory centerHeadOrder = orderLinkedList[centerHead];
+            Order memory centerTailOrder = orderLinkedList[centerTail];
+            if (centerHead != 0) {
+                OrderStatus status = _getOrderStatus(
+                    currentTick,
+                    centerHeadOrder.tickLower,
+                    centerHeadOrder.tickUpper,
+                    centerHeadOrder.direction
+                );
+                if (status == OrderStatus.ITM) revert("User can not update center while orders are ITM.");
+            }
+            if (centerTail != 0) {
+                OrderStatus status = _getOrderStatus(
+                    currentTick,
+                    centerTailOrder.tickLower,
+                    centerTailOrder.tickUpper,
+                    centerTailOrder.direction
+                );
                 if (status == OrderStatus.ITM) revert("User can not update center while orders are ITM.");
             }
 
@@ -298,8 +315,10 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface {
             // the current tick.
             if (lower > currentTick) {
                 // Check if upper is less than the lower of the center order, if so make this new order the center.
-                if (upper < centerOrder.tickLower) poolToData[pool].center = positionId;
+                if (upper < centerHeadOrder.tickLower) poolToData[pool].centerHead = positionId;
                 // else do nothing the center is correct.
+            } else if (upper < currentTick) {
+                if (lower > centerTailOrder.tickUpper) poolToData[pool].centerTail = positionId;
             }
             // else center is correct.
         }
@@ -311,31 +330,32 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface {
         int24 lower,
         int24 upper
     ) internal view {
-        if (head == 0 && tail == 0) revert("Invalid Proposal");
-        if (tail == 0) {
-            Order memory headOrder = orderLinkedList[head];
-            // head.tail must be zero
-            if (headOrder.tail != 0) revert("Invalid Proposal");
-            // head lowerTick >= upper
-            if (headOrder.tickLower < upper) revert("Invalid Proposal");
-        } else if (head == 0) {
-            Order memory tailOrder = orderLinkedList[tail];
-            // tail.head must be zero
-            if (tailOrder.head != 0) revert("Invalid Proposal");
-            // tail upperTick <= lower
-            if (tailOrder.tickUpper > lower) revert("Invalid Proposal");
-        } else {
-            Order memory headOrder = orderLinkedList[head];
-            // head.tail == tail
-            if (headOrder.tail != tail) revert("Invalid Proposal");
-            // head lower tick >= upper
-            if (headOrder.tickLower < upper) revert("Invalid Proposal");
-            Order memory tailOrder = orderLinkedList[tail];
-            // tail.head == head
-            if (tailOrder.head != head) revert("Invalid Proposal");
-            // tail upper tick <= lower
-            if (tailOrder.tickUpper > lower) revert("Invalid Proposal");
-        }
+        // if (head == 0 && tail == 0)
+        //     if () {revert("Invalid Proposal");}
+        // if (tail == 0) {
+        //     Order memory headOrder = orderLinkedList[head];
+        //     // head.tail must be zero
+        //     if (headOrder.tail != 0) revert("Invalid Proposal");
+        //     // head lowerTick >= upper
+        //     if (headOrder.tickLower < upper) revert("Invalid Proposal");
+        // } else if (head == 0) {
+        //     Order memory tailOrder = orderLinkedList[tail];
+        //     // tail.head must be zero
+        //     if (tailOrder.head != 0) revert("Invalid Proposal");
+        //     // tail upperTick <= lower
+        //     if (tailOrder.tickUpper > lower) revert("Invalid Proposal");
+        // } else {
+        //     Order memory headOrder = orderLinkedList[head];
+        //     // head.tail == tail
+        //     if (headOrder.tail != tail) revert("Invalid Proposal");
+        //     // head lower tick >= upper
+        //     if (headOrder.tickLower < upper) revert("Invalid Proposal");
+        //     Order memory tailOrder = orderLinkedList[tail];
+        //     // tail.head == head
+        //     if (tailOrder.head != head) revert("Invalid Proposal");
+        //     // tail upper tick <= lower
+        //     if (tailOrder.tickUpper > lower) revert("Invalid Proposal");
+        // }
     }
 
     function _addPositionToList(
@@ -368,25 +388,29 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface {
         Order storage order = orderLinkedList[positionId];
         if (order.direction) {
             // token1
-            order.token1Amount += amount;
+            order.token0Amount += amount;
         } else {
             // token0
-            order.token0Amount += amount;
+            order.token1Amount += amount;
         }
 
         // Check if user is already in the order.
         uint256 dataId = order.userDataId;
         uint256 userCount = userData[dataId].length;
-        for (uint256 i = 0; i < userCount; ++i) {
-            if (userData[dataId][i].user == user) {
-                // We found the user, update their existing balance.
-                userData[dataId][i].depositAmount += amount;
-                break;
-            }
-            if (i == userCount - 1) {
-                // made it to the end and did not find the user, so add them.
-                userData[dataId].push(UserData(user, uint96(amount)));
-                break;
+        if (userCount == 0) {
+            userData[dataId].push(UserData(user, uint96(amount)));
+        } else {
+            for (uint256 i = 0; i < userCount; ++i) {
+                if (userData[dataId][i].user == user) {
+                    // We found the user, update their existing balance.
+                    userData[dataId][i].depositAmount += amount;
+                    break;
+                }
+                if (i == userCount - 1) {
+                    // made it to the end and did not find the user, so add them.
+                    userData[dataId].push(UserData(user, uint96(amount)));
+                    break;
+                }
             }
         }
     }
@@ -401,8 +425,11 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface {
     ) internal returns (uint256) {
         address token0 = pool.token0();
         address token1 = pool.token1();
-        if (direction) ERC20(token1).safeApprove(address(positionManager), amount1);
-        else ERC20(token0).safeApprove(address(positionManager), amount0);
+        if (direction) ERC20(token0).safeApprove(address(positionManager), amount0);
+        else ERC20(token1).safeApprove(address(positionManager), amount1);
+
+        uint128 amount0Min = amount0 == 0 ? 0 : (amount0 * 0.9999e18) / 1e18;
+        uint128 amount1Min = amount1 == 0 ? 0 : (amount1 * 0.9999e18) / 1e18;
 
         // Create mint params.
         INonfungiblePositionManager.MintParams memory params = INonfungiblePositionManager.MintParams({
@@ -413,8 +440,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface {
             tickUpper: upper,
             amount0Desired: amount0,
             amount1Desired: amount1,
-            amount0Min: amount0,
-            amount1Min: amount1,
+            amount0Min: amount0Min,
+            amount1Min: amount1Min,
             recipient: address(this),
             deadline: block.timestamp
         });
@@ -438,8 +465,11 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface {
     ) internal {
         address token0 = pool.token0();
         address token1 = pool.token1();
-        if (direction) ERC20(token1).safeApprove(address(positionManager), amount1);
-        else ERC20(token0).safeApprove(address(positionManager), amount0);
+        if (direction) ERC20(token0).safeApprove(address(positionManager), amount0);
+        else ERC20(token1).safeApprove(address(positionManager), amount1);
+
+        uint128 amount0Min = amount0 == 0 ? 0 : (amount0 * 0.9999e18) / 1e18;
+        uint128 amount1Min = amount1 == 0 ? 0 : (amount1 * 0.9999e18) / 1e18;
 
         // Create increase liquidity params.
         INonfungiblePositionManager.IncreaseLiquidityParams memory params = INonfungiblePositionManager
@@ -447,37 +477,57 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface {
                 tokenId: positionId,
                 amount0Desired: amount0,
                 amount1Desired: amount1,
-                amount0Min: amount0,
-                amount1Min: amount1,
+                amount0Min: amount0Min,
+                amount1Min: amount1Min,
                 deadline: block.timestamp
             });
 
         // Increase liquidity in pool.
-        (, uint256 amount0Act, uint256 amount1Act) = positionManager.increaseLiquidity(params);
-        if (amount0Act != amount0 || amount1Act != amount1) revert("Did not use full amount");
+        positionManager.increaseLiquidity(params);
+        // TODO so it looks like uni will round down by 10 wei or so sometimes, is that worth refunding the user? Probs not they'd spend more on the extra gas.
     }
 
     uint256 private constant MAX_FILLS_PER_UPKEEP = 10;
 
     // TODO should we add an ITM tick buffer? So that orders must be ITM by atleast buffer ticks.
+    // TODO rework this logic to work better with the new head center and tail center.
     function checkUpkeep(bytes calldata checkData) external view returns (bool upkeepNeeded, bytes memory performData) {
         uint256[MAX_FILLS_PER_UPKEEP] memory ordersToFulfill;
         uint256 fillCount;
         bool walkDirection;
         // Check if pool center is ITM.
         IUniswapV3Pool pool = abi.decode(checkData, (IUniswapV3Pool));
-        uint256 target = poolToData[pool].center;
         (, int24 currentTick, , , , , ) = pool.slot0();
-        Order memory order = orderLinkedList[poolToData[pool].center];
-        OrderStatus status = _getOrderStatus(currentTick, order.tickLower, order.tickUpper, order.direction);
-        if (status == OrderStatus.ITM) {
+
+        // Check if the center head is ITM.
+        uint256 target = poolToData[pool].centerHead;
+        Order memory order = orderLinkedList[poolToData[pool].centerHead];
+        OrderStatus status; //= _getOrderStatus(currentTick, order.tickLower, order.tickUpper, order.direction);
+        if (
+            target != 0 &&
+            _getOrderStatus(currentTick, order.tickLower, order.tickUpper, order.direction) == OrderStatus.ITM
+        ) {
             ordersToFulfill[0] = target;
             fillCount++;
             walkDirection = true; // Walk towards head of list.
+            target = order.head;
         } else {
-            walkDirection = false; // Walk towards tail of list.
+            // Check if the center tail is ITM.
+            target = poolToData[pool].centerTail;
+            if (target == 0) return (false, abi.encode(0));
+            order = orderLinkedList[target];
+            status = _getOrderStatus(currentTick, order.tickLower, order.tickUpper, order.direction);
+            if (status == OrderStatus.ITM) {
+                ordersToFulfill[0] = target;
+                fillCount++;
+                walkDirection = false; // Walk towards tail of list.
+                target = order.tail;
+            } else {
+                // No orders are ITM.
+                return (false, abi.encode(0));
+            }
         }
-        target = walkDirection ? order.head : order.tail;
+
         while (target != 0 && fillCount < MAX_FILLS_PER_UPKEEP) {
             order = orderLinkedList[target];
             // Check if target is ITM.
@@ -637,10 +687,15 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface {
         Order storage order
     ) internal {
         // Checks if order is the center, if so then it will set it to the the center orders head(which is okay if it is zero).
-        uint256 center = poolToData[pool].center;
-        if (target == center) {
-            uint256 centerHead = orderLinkedList[center].head;
-            poolToData[pool].center = centerHead;
+        uint256 centerHead = poolToData[pool].centerHead;
+        uint256 centerTail = poolToData[pool].centerTail;
+
+        if (target == centerHead) {
+            uint256 newHead = orderLinkedList[centerHead].head;
+            poolToData[pool].centerHead = newHead;
+        } else if (target == centerTail) {
+            uint256 newTail = orderLinkedList[centerTail].tail;
+            poolToData[pool].centerTail = newTail;
         }
 
         // Remove order from linked list.
@@ -648,7 +703,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface {
         orderLinkedList[order.head].tail = order.tail;
         order.head = 0;
         order.tail = 0;
-        // Used in fulfill order and cancel order.
     }
 
     ERC20 public WETH = ERC20(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
@@ -696,7 +750,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface {
             }
         }
 
-        revert("User not found");
+        // revert("User not found");
     }
 
     function cancelOrder(
@@ -746,16 +800,23 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface {
                     // Found our user.
                     uint96 depositAmount = userData[userDataId][i].depositAmount;
                     if (order.direction) {
-                        if (order.token1Amount == depositAmount) liquidityPercentToTake = 1e18;
-                        else {
-                            liquidityPercentToTake = (1e18 * depositAmount) / order.token1Amount;
-                        }
-                    } else {
                         if (order.token0Amount == depositAmount) liquidityPercentToTake = 1e18;
                         else {
                             liquidityPercentToTake = (1e18 * depositAmount) / order.token0Amount;
                         }
+                    } else {
+                        if (order.token1Amount == depositAmount) liquidityPercentToTake = 1e18;
+                        else {
+                            liquidityPercentToTake = (1e18 * depositAmount) / order.token1Amount;
+                        }
                     }
+
+                    // Remove user from array.
+                    userData[userDataId][i] = UserData({
+                        user: userData[userDataId][userLength - 1].user,
+                        depositAmount: userData[userDataId][userLength - 1].depositAmount
+                    });
+                    delete userData[userDataId][userLength - 1];
                 } else if (i == userLength - 1) {
                     revert("User not found");
                 }
