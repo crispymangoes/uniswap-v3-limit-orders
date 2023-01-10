@@ -8,17 +8,18 @@ import { Owned } from "@solmate/auth/Owned.sol";
 import { UniswapV3Pool as IUniswapV3Pool } from "src/interfaces/uniswapV3/UniswapV3Pool.sol";
 import { NonfungiblePositionManager as INonfungiblePositionManager } from "src/interfaces/uniswapV3/NonfungiblePositionManager.sol";
 import { ERC721Holder } from "@openzeppelin/contracts/token/ERC721/utils/ERC721Holder.sol";
+import { LinkTokenInterface } from "@chainlink/contracts/src/v0.8/interfaces/LinkTokenInterface.sol";
+import { IKeeperRegistrar as KeeperRegistrar } from "src/interfaces/chainlink/IKeeperRegistrar.sol";
 
 import { console } from "@forge-std/Test.sol";
 
+// TODO are struct memory variables passed by reference? and if so can they be used to update a structs state using the = sign?
 contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holder {
     using SafeTransferLib for ERC20;
 
-    INonfungiblePositionManager public immutable positionManager;
-
-    constructor(address _owner, INonfungiblePositionManager _positionManager) Owned(_owner) {
-        positionManager = _positionManager;
-    }
+    /*//////////////////////////////////////////////////////////////
+                             STRUCTS
+    //////////////////////////////////////////////////////////////*/
 
     // Stores the last saved center position of the orderLinkedList based off an input UniV3 pool
     struct PoolData {
@@ -29,23 +30,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         uint128 token0Fees; // Swap fees from input token, withdrawable by admin
         uint128 token1Fees; // Swap fees from input token, withdrawable by admin
     }
-    mapping(IUniswapV3Pool => PoolData) public poolToData;
-
-    struct UserData {
-        address user;
-        uint96 depositAmount;
-    }
-
-    // Zero is reserved
-    uint256 public userDataCount = 1;
-
-    mapping(uint256 => UserData[]) private userData;
-
-    uint24 public constant BUFFER = 10; // The number of ticks past the endTick needed for checkUpkeep to trigger an upkeep.
-    // The minimum spacing between new order ticks is this mulitplier times the pools min tick spacing, this way users can better
 
     struct Order {
-        bool isValid; // Used as a quick check to see if a given token id was made by this contract.
         bool direction; //Determines what direction we are going
         int24 tickUpper;
         int24 tickLower;
@@ -56,12 +42,10 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         uint256 tail;
     }
 
-    //TODO emit what userDataId a user is in when they add liquiidty
-    //TODO emit when a keeper fills an order and emit the userDataId filled
-
-    // Orders can be reused to save on NFT space
-    // PositionId to Order
-    mapping(uint256 => Order) public orderLinkedList;
+    struct UserData {
+        address user;
+        uint96 depositAmount;
+    }
 
     // Using the below struct values and the userData array, we can figure out how much a user is owed.
     struct Claim {
@@ -71,51 +55,123 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         bool direction; //Determines the token out
     }
 
+    /*//////////////////////////////////////////////////////////////
+                             GLOBAL STATE
+    //////////////////////////////////////////////////////////////*/
+
     // How users claim their tokens, just need to pass in the uint128 userDataId
     mapping(uint256 => Claim) public claim;
 
+    mapping(IUniswapV3Pool => PoolData) public poolToData;
+
     mapping(int24 => mapping(int24 => uint256)) public getPositionFromTicks; // maps lower -> upper -> positionId
 
-    /**
-     * Flow
-     * setupLimitOrder
-     *  -Creates a new upkeep
-     *  -Called by owner who funds initial upkeep and is the owner of the upkeep.
-     *  -Linked list is initialized with zero center
+    // Simplest approach is to have an owner set value for minimum liquidity
+    mapping(ERC20 => uint256) public minimumAssets;
+    uint256 public upkeepGasLimit = 100_000;
+    uint256 public upkeepGasPrice = 100_000;
 
-     * newOrder
-     *  -Opens an order with a position not in the List. Can mint a new LP token(internal mint function)
-     *  -FE specifies where position should go
-     *  -Position must be fully OTM.(internal check, maybe could return a enum, ITM, OTM, BOTH
-     *  -Require a minimum liquidity is met(fixed value) internal function that can be changed
-     *  -update order info and add users assets as liquidity.
-     *  -Create userDataId
+    // Zero is reserved
+    uint256 public userDataCount = 1;
 
-     * cancelOrder
-     *  -If last liquidity in order, than remove it from the array
-     *  -Remove liquidity from position and return it to user.
+    mapping(uint256 => UserData[]) private userData;
 
-     * claimOrder
-     *  -Pass in the userDataId
-     *  -Caller pays their fee share/if they claim more than there address, they pay that fee share too(FOR NOW DO THIS IN LINK WITH NO SWAPS) AND FUND UPKEEP IN SEPEARTE TX.
-     *  -Determine output token owed.
+    uint24 public constant BUFFER = 10; // The number of ticks past the endTick needed for checkUpkeep to trigger an upkeep.
+    // The minimum spacing between new order ticks is this mulitplier times the pools min tick spacing, this way users can better
 
-     * checkUpkeep
-     *  -Save current tick price
-     *  -Work through open LP positions, start at center, check if order is ITM
-     *  -move to head or tail based off previous result.
-     
-     * performUpkeep
-     *  -takes an array of positions to fulfill
-     *  -checks that every position is ITM
-     *  -updates position in linked list.
-     */
-    // TODO
-    function setupLimitOrder(IUniswapV3Pool pool, uint256 initialUpkeepFunds) external {
+    // Orders can be reused to save on NFT space
+    // PositionId to Order
+    mapping(uint256 => Order) public orderLinkedList;
+    /*//////////////////////////////////////////////////////////////
+                                 EVENTS
+    //////////////////////////////////////////////////////////////*/
+
+    event UserGroup(address user, uint256 group);
+    event OrderFilled(uint256 userDataId);
+
+    /*//////////////////////////////////////////////////////////////
+                                 ERRORS
+    //////////////////////////////////////////////////////////////*/
+
+    /*//////////////////////////////////////////////////////////////
+                                 ENUMS
+    //////////////////////////////////////////////////////////////*/
+
+    enum OrderStatus {
+        ITM,
+        OTM,
+        MIXED
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                              IMMUTABLES
+    //////////////////////////////////////////////////////////////*/
+
+    ERC20 public immutable WRAPPED_NATIVE; // Mainnet 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2
+
+    INonfungiblePositionManager public immutable positionManager; // Mainnet 0xC36442b4a4522E871399CD717aBDD847Ab11FE88
+
+    LinkTokenInterface public immutable LINK; // Mainnet 0x514910771AF9Ca656af840dff83E8264EcF986CA
+
+    KeeperRegistrar public immutable REGISTRAR; // Mainnet 0xDb8e8e2ccb5C033938736aa89Fe4fa1eDfD15a1d
+
+    constructor(
+        address _owner,
+        INonfungiblePositionManager _positionManager,
+        ERC20 wrappedNative,
+        LinkTokenInterface link,
+        KeeperRegistrar registrar
+    ) Owned(_owner) {
+        positionManager = _positionManager;
+        WRAPPED_NATIVE = wrappedNative;
+        LINK = link;
+        REGISTRAR = registrar;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                              OWNER LOGIC
+    //////////////////////////////////////////////////////////////*/
+
+    uint32 private constant MAX_FILLS_PER_UPKEEP = 10;
+    uint32 public constant UPKEEP_GAS_LIMIT = MAX_FILLS_PER_UPKEEP * 300_000;
+
+    function setupLimitOrder(IUniswapV3Pool pool, uint256 initialUpkeepFunds) external onlyOwner {
         // Check if Limit Order is already setup for `pool`.
-        initialUpkeepFunds += 1;
+        if (address(poolToData[pool].token0) != address(0)) revert("Pool already set up");
 
         // Create Upkeep.
+        if (initialUpkeepFunds > 0) {
+            // Owner wants to automatically create an upkeep for new pool.
+            SafeTransferLib.safeTransferFrom(ERC20(address(LINK)), msg.sender, address(this), initialUpkeepFunds);
+
+            string memory name = "Limit Order Registry";
+            uint96 amount = uint96(initialUpkeepFunds);
+            bytes memory upkeepCreationData = abi.encodeWithSelector(
+                KeeperRegistrar.register.selector,
+                name,
+                abi.encode(0),
+                address(this),
+                UPKEEP_GAS_LIMIT,
+                msg.sender,
+                abi.encode(pool),
+                amount,
+                77,
+                address(this)
+            );
+            // bytes memory data = abi.encodeWithSelector(
+            //     FUNC_SELECTOR,
+            //     name,
+            //     hex"",
+            //     address(this),
+            //     UPKEEP_GAS_LIMIT,
+            //     msg.sender,
+            //     abi.encode(pool),
+            //     amount,
+            //     77,
+            //     msg.sender
+            // );
+            LINK.transferAndCall(address(REGISTRAR), initialUpkeepFunds, upkeepCreationData);
+        }
 
         // poolToData
         poolToData[pool] = PoolData({
@@ -128,44 +184,35 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         });
     }
 
-    // Simplest approach is to have an owner set value for minimum liquidity
-    mapping(ERC20 => uint256) public minimumAssets;
-
     function setMinimumAssets(uint256 amount, ERC20 asset) external onlyOwner {
         minimumAssets[asset] = amount;
     }
 
-    function _enforceMinimumLiquidity(uint256 amount, ERC20 asset) internal view {
-        uint256 minimum = minimumAssets[asset];
-        if (minimum == 0) revert("Minimum not set");
-        if (amount < minimum) revert("Minimum not met");
+    /// @dev premium should be factored into this value.
+    function setUpkeepGasLimit(uint256 gasLimit) external onlyOwner {
+        upkeepGasLimit = gasLimit;
     }
 
-    enum OrderStatus {
-        ITM,
-        OTM,
-        MIXED
+    function setUpkeepGasPrice(uint256 gasPrice) external onlyOwner {
+        upkeepGasPrice = gasPrice;
     }
 
-    function _getOrderStatus(
-        int24 currentTick,
-        int24 lower,
-        int24 upper,
-        bool direction
-    ) internal pure returns (OrderStatus status) {
-        if (upper == lower) revert("Invalid ticks");
-        if (direction) {
-            // Indicates we want to go lower -> upper.
-            if (currentTick > upper) return OrderStatus.ITM;
-            if (currentTick >= lower) return OrderStatus.MIXED;
-            else return OrderStatus.OTM;
-        } else {
-            // Indicates we want to go upper -> lower.
-            if (currentTick < lower) return OrderStatus.ITM;
-            if (currentTick <= upper) return OrderStatus.MIXED;
-            else return OrderStatus.OTM;
+    function withdrawSwapFees(IUniswapV3Pool pool) external onlyOwner {
+        PoolData storage data = poolToData[pool];
+
+        if (data.token0Fees > 0) {
+            data.token0.safeTransfer(msg.sender, data.token0Fees);
+            data.token0Fees = 0;
+        }
+        if (data.token1Fees > 0) {
+            data.token1.safeTransfer(msg.sender, data.token1Fees);
+            data.token1Fees = 0;
         }
     }
+
+    /*//////////////////////////////////////////////////////////////
+                        USER ORDER MANAGEMENT LOGIC
+    //////////////////////////////////////////////////////////////*/
 
     // targetTick is the tick where your limit order would be filled.
     function newOrder(
@@ -237,7 +284,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         } else {
             // Check if the position id is already being used in List.
             Order memory order = orderLinkedList[positionId];
-            if (order.head != 0 || order.tail != 0) {
+            if (order.token0Amount > 0 || order.token1Amount > 0) {
                 // Order is already in the linked list, ignore proposed spot.
                 // Need to add liquidity,
                 _addToPosition(pool, positionId, amount0, amount1, direction);
@@ -260,7 +307,237 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                 _updateCenter(pool, positionId, tick, upper, lower);
             }
         }
+        emit UserGroup(msg.sender, orderLinkedList[positionId].userDataId);
     }
+
+    // TODO this could be made payable, to reduce gas cost for users.
+    function claimOrder(
+        IUniswapV3Pool pool,
+        uint256 userDataId,
+        address user
+    ) external returns (uint256) {
+        Claim storage userClaim = claim[userDataId];
+        uint256 userLength = userData[userDataId].length;
+
+        // Transfer fee in.
+        WRAPPED_NATIVE.safeTransferFrom(msg.sender, address(this), userClaim.feePerUser);
+
+        for (uint256 i; i < userLength; ++i) {
+            if (userData[userDataId][i].user == user) {
+                // Found our user we are claiming for.
+                // Calculate owed amount.
+                uint256 totalTokenDeposited;
+                uint256 totalTokenOut;
+                ERC20 tokenOut;
+                if (userClaim.direction) {
+                    totalTokenDeposited = userClaim.token0Amount;
+                    totalTokenOut = userClaim.token1Amount;
+                    tokenOut = poolToData[pool].token1;
+                } else {
+                    totalTokenDeposited = userClaim.token1Amount;
+                    totalTokenOut = userClaim.token0Amount;
+                    tokenOut = poolToData[pool].token0;
+                }
+
+                uint256 owed = (totalTokenOut * userData[userDataId][i].depositAmount) / totalTokenDeposited;
+
+                // Remove user that claimed from array.
+                userData[userDataId][i] = UserData({
+                    user: userData[userDataId][userLength - 1].user,
+                    depositAmount: userData[userDataId][userLength - 1].depositAmount
+                });
+                delete userData[userDataId][userLength - 1];
+
+                // Transfer tokens owed to user.
+                tokenOut.safeTransfer(user, owed);
+                return owed;
+            }
+        }
+
+        revert("User not found");
+    }
+
+    /**
+     * @notice This logic will send ALL the swap fees from a position to the last person that cancels the order.
+     */
+    function cancelOrder(
+        IUniswapV3Pool pool,
+        int24 targetTick,
+        bool direction
+    ) external returns (uint128 amount0, uint128 amount1) {
+        // Make sure order is OTM.
+        (, int24 tick, , , , , ) = pool.slot0();
+
+        // Determine upper and lower ticks.
+        int24 upper;
+        int24 lower;
+        {
+            int24 tickSpacing = pool.tickSpacing();
+            // TODO is it safe to assume tickSpacing is always positive?
+            // Make sure targetTick is divisible by spacing.
+            if (targetTick % tickSpacing != 0) revert("Invalid target tick");
+            if (direction) {
+                upper = targetTick;
+                lower = targetTick - tickSpacing;
+            } else {
+                upper = targetTick + tickSpacing;
+                lower = targetTick;
+            }
+        }
+        // Validate lower, upper,and direction.
+        {
+            OrderStatus status = _getOrderStatus(tick, lower, upper, direction);
+            if (status != OrderStatus.OTM) revert("Invalid Order");
+        }
+
+        // Get the position id.
+        uint256 positionId = getPositionFromTicks[lower][upper];
+
+        if (positionId == 0) revert("Invalid position");
+
+        uint256 liquidityPercentToTake;
+
+        // Get the users deposit amount in the order.
+        {
+            Order storage order = orderLinkedList[positionId];
+            uint256 userDataId = order.userDataId;
+            uint256 userLength = userData[userDataId].length;
+            for (uint256 i; i < userLength; ++i) {
+                if (userData[userDataId][i].user == msg.sender) {
+                    // Found our user.
+                    uint96 depositAmount = userData[userDataId][i].depositAmount;
+                    if (order.direction) {
+                        if (order.token0Amount == depositAmount) liquidityPercentToTake = 1e18;
+                        else {
+                            liquidityPercentToTake = (1e18 * depositAmount) / order.token0Amount;
+                        }
+                    } else {
+                        if (order.token1Amount == depositAmount) liquidityPercentToTake = 1e18;
+                        else {
+                            liquidityPercentToTake = (1e18 * depositAmount) / order.token1Amount;
+                        }
+                    }
+
+                    // Remove user from array.
+                    userData[userDataId][i] = UserData({
+                        user: userData[userDataId][userLength - 1].user,
+                        depositAmount: userData[userDataId][userLength - 1].depositAmount
+                    });
+                    userData[userDataId].pop();
+                    break;
+                } else if (i == userLength - 1) {
+                    revert("User not found");
+                }
+            }
+
+            (amount0, amount1) = _takeFromPosition(positionId, pool, liquidityPercentToTake);
+            if (liquidityPercentToTake == 1e18) {
+                _removeOrderFromList(positionId, pool, order);
+                // Zero out balances for cancelled order.
+                order.token0Amount = 0;
+                order.token1Amount = 0;
+            }
+        }
+
+        if (amount0 > 0) poolToData[pool].token0.safeTransfer(msg.sender, amount0);
+        else if (amount1 > 0) poolToData[pool].token1.safeTransfer(msg.sender, amount1);
+        else revert("No liquidity in order");
+        // else Determine users share of liquidity and withdraw
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                     CHAINLINK AUTOMATION LOGIC
+    //////////////////////////////////////////////////////////////*/
+
+    // TODO should we add an ITM tick buffer? So that orders must be ITM by atleast buffer ticks.
+    function checkUpkeep(bytes calldata checkData) external view returns (bool upkeepNeeded, bytes memory performData) {
+        uint256[MAX_FILLS_PER_UPKEEP] memory ordersToFulfill;
+        uint256 fillCount;
+        bool walkDirection;
+        // Check if pool center is ITM.
+        IUniswapV3Pool pool = abi.decode(checkData, (IUniswapV3Pool));
+        (, int24 currentTick, , , , , ) = pool.slot0();
+
+        // Check if the center head is set and ITM.
+        uint256 target = poolToData[pool].centerHead;
+        Order memory order = orderLinkedList[poolToData[pool].centerHead];
+        OrderStatus status;
+        if (
+            target != 0 &&
+            _getOrderStatus(currentTick, order.tickLower, order.tickUpper, order.direction) == OrderStatus.ITM
+        ) {
+            ordersToFulfill[0] = target;
+            fillCount++;
+            walkDirection = true; // Walk towards head of list.
+            target = order.head;
+        } else {
+            // Check if the center tail is ITM.
+            target = poolToData[pool].centerTail;
+            if (target == 0) return (false, abi.encode(0));
+            order = orderLinkedList[target];
+            status = _getOrderStatus(currentTick, order.tickLower, order.tickUpper, order.direction);
+            if (status == OrderStatus.ITM) {
+                ordersToFulfill[0] = target;
+                fillCount++;
+                walkDirection = false; // Walk towards tail of list.
+                target = order.tail;
+            } else {
+                // No orders are ITM.
+                return (false, abi.encode(0));
+            }
+        }
+
+        while (target != 0 && fillCount < MAX_FILLS_PER_UPKEEP) {
+            order = orderLinkedList[target];
+            // Check if target is ITM.
+            status = _getOrderStatus(currentTick, order.tickLower, order.tickUpper, order.direction);
+            if (status == OrderStatus.ITM) {
+                ordersToFulfill[fillCount] = target;
+                fillCount++;
+                target = walkDirection ? order.head : order.tail;
+            } else {
+                // No more orders need to be filled.
+                break;
+            }
+        }
+
+        // Check if there are any orders to fill.
+        if (fillCount > 0) {
+            upkeepNeeded = true;
+            performData = abi.encode(pool, ordersToFulfill);
+        }
+    }
+
+    function performUpkeep(bytes calldata performData) external {
+        (IUniswapV3Pool pool, uint256[MAX_FILLS_PER_UPKEEP] memory ordersToFulfill) = abi.decode(
+            performData,
+            (IUniswapV3Pool, uint256[10])
+        );
+
+        // Estimate gas cost.
+        uint256 estimatedFee = upkeepGasLimit * upkeepGasPrice;
+
+        // Fulfill orders.
+        (, int24 currentTick, , , , , ) = pool.slot0();
+        bool orderFilled;
+        for (uint256 i; i < MAX_FILLS_PER_UPKEEP; ++i) {
+            uint256 target = ordersToFulfill[i];
+            if (target == 0) break;
+            Order storage order = orderLinkedList[target];
+            OrderStatus status = _getOrderStatus(currentTick, order.tickLower, order.tickUpper, order.direction);
+            if (status == OrderStatus.ITM) {
+                _fulfillOrder(target, pool, order, estimatedFee);
+                emit OrderFilled(order.userDataId);
+                orderFilled = true;
+            }
+        }
+
+        if (!orderFilled) revert("No orders filled!");
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                     INTERNAL ORDER LOGIC
+    //////////////////////////////////////////////////////////////*/
 
     /**
      * @notice We revert if center or center tail orders are ITM to stop attackers from manipulating
@@ -272,6 +549,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
      *         3) The attacker can not use a flash loan so they must have a large sum of capital.
      *         4) Performing this attack exposes the attacker to arbitrage risk where other bots
      *            will try to arbitrage the attackers pool.
+     * @dev Technically we only need to enforce the Center ITM check only if we are actually updating the center.
+     *      TODO in the future this change can be made for slightly more robust and efficient code.
      */
     function _updateCenter(
         IUniswapV3Pool pool,
@@ -429,6 +708,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         if (direction) ERC20(token0).safeApprove(address(positionManager), amount0);
         else ERC20(token1).safeApprove(address(positionManager), amount1);
 
+        // 0.9999e18 accounts for rounding errors in the Uniswap V3 protocol.
         uint128 amount0Min = amount0 == 0 ? 0 : (amount0 * 0.9999e18) / 1e18;
         uint128 amount1Min = amount1 == 0 ? 0 : (amount1 * 0.9999e18) / 1e18;
 
@@ -486,105 +766,30 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         // TODO so it looks like uni will round down by 10 wei or so sometimes, is that worth refunding the user? Probs not they'd spend more on the extra gas.
     }
 
-    uint256 private constant MAX_FILLS_PER_UPKEEP = 10;
+    function _enforceMinimumLiquidity(uint256 amount, ERC20 asset) internal view {
+        uint256 minimum = minimumAssets[asset];
+        if (minimum == 0) revert("Minimum not set");
+        if (amount < minimum) revert("Minimum not met");
+    }
 
-    // TODO should we add an ITM tick buffer? So that orders must be ITM by atleast buffer ticks.
-    // TODO rework this logic to work better with the new head center and tail center.
-    function checkUpkeep(bytes calldata checkData) external view returns (bool upkeepNeeded, bytes memory performData) {
-        uint256[MAX_FILLS_PER_UPKEEP] memory ordersToFulfill;
-        uint256 fillCount;
-        bool walkDirection;
-        // Check if pool center is ITM.
-        IUniswapV3Pool pool = abi.decode(checkData, (IUniswapV3Pool));
-        (, int24 currentTick, , , , , ) = pool.slot0();
-
-        // Check if the center head is ITM.
-        uint256 target = poolToData[pool].centerHead;
-        Order memory order = orderLinkedList[poolToData[pool].centerHead];
-        OrderStatus status; //= _getOrderStatus(currentTick, order.tickLower, order.tickUpper, order.direction);
-        if (
-            target != 0 &&
-            _getOrderStatus(currentTick, order.tickLower, order.tickUpper, order.direction) == OrderStatus.ITM
-        ) {
-            ordersToFulfill[0] = target;
-            fillCount++;
-            walkDirection = true; // Walk towards head of list.
-            target = order.head;
+    function _getOrderStatus(
+        int24 currentTick,
+        int24 lower,
+        int24 upper,
+        bool direction
+    ) internal pure returns (OrderStatus status) {
+        if (upper == lower) revert("Invalid ticks");
+        if (direction) {
+            // Indicates we want to go lower -> upper.
+            if (currentTick > upper) return OrderStatus.ITM;
+            if (currentTick >= lower) return OrderStatus.MIXED;
+            else return OrderStatus.OTM;
         } else {
-            // Check if the center tail is ITM.
-            target = poolToData[pool].centerTail;
-            if (target == 0) return (false, abi.encode(0));
-            order = orderLinkedList[target];
-            status = _getOrderStatus(currentTick, order.tickLower, order.tickUpper, order.direction);
-            if (status == OrderStatus.ITM) {
-                ordersToFulfill[0] = target;
-                fillCount++;
-                walkDirection = false; // Walk towards tail of list.
-                target = order.tail;
-            } else {
-                // No orders are ITM.
-                return (false, abi.encode(0));
-            }
+            // Indicates we want to go upper -> lower.
+            if (currentTick < lower) return OrderStatus.ITM;
+            if (currentTick <= upper) return OrderStatus.MIXED;
+            else return OrderStatus.OTM;
         }
-
-        while (target != 0 && fillCount < MAX_FILLS_PER_UPKEEP) {
-            order = orderLinkedList[target];
-            // Check if target is ITM.
-            status = _getOrderStatus(currentTick, order.tickLower, order.tickUpper, order.direction);
-            if (status == OrderStatus.ITM) {
-                ordersToFulfill[fillCount] = target;
-                fillCount++;
-                target = walkDirection ? order.head : order.tail;
-            } else {
-                // No more orders need to be filled.
-                break;
-            }
-        }
-
-        // Check if there are any orders to fill.
-        if (fillCount > 0) {
-            upkeepNeeded = true;
-            performData = abi.encode(pool, ordersToFulfill);
-        }
-    }
-
-    uint256 public upkeepGasLimit = 100_000;
-
-    /// @dev premium should be factored into this value.
-    function setUpkeepGasLimit(uint256 gasLimit) external onlyOwner {
-        upkeepGasLimit = gasLimit;
-    }
-
-    uint256 public upkeepGasPrice = 100_000;
-
-    function setUpkeepGasPrice(uint256 gasPrice) external onlyOwner {
-        upkeepGasPrice = gasPrice;
-    }
-
-    function performUpkeep(bytes calldata performData) external {
-        (IUniswapV3Pool pool, uint256[MAX_FILLS_PER_UPKEEP] memory ordersToFulfill) = abi.decode(
-            performData,
-            (IUniswapV3Pool, uint256[10])
-        );
-
-        // Estimate gas cost.
-        uint256 estimatedFee = upkeepGasLimit * upkeepGasPrice;
-
-        // Fulfill orders.
-        (, int24 currentTick, , , , , ) = pool.slot0();
-        bool orderFilled;
-        for (uint256 i; i < MAX_FILLS_PER_UPKEEP; ++i) {
-            uint256 target = ordersToFulfill[i];
-            if (target == 0) break;
-            Order storage order = orderLinkedList[target];
-            OrderStatus status = _getOrderStatus(currentTick, order.tickLower, order.tickUpper, order.direction);
-            if (status == OrderStatus.ITM) {
-                _fulfillOrder(target, pool, order, estimatedFee);
-                orderFilled = true;
-            }
-        }
-
-        if (!orderFilled) revert("No orders filled!");
     }
 
     function _fulfillOrder(
@@ -621,6 +826,10 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         }
         newClaim.direction = order.direction;
 
+        // Zero out order balances.
+        order.token0Amount = 0;
+        order.token1Amount = 0;
+
         // Remove order from linked list.
         _removeOrderFromList(target, pool, order);
     }
@@ -630,8 +839,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         IUniswapV3Pool pool,
         uint256 liquidityPercent
     ) internal returns (uint128, uint128) {
-        // Should probs just accept a percent 1e18 being 100, then when users cancel we pass in the percent of the liquidity they own for the order.
-        // Also collects any swap fees, if percent is 100?
         (, , , , , , , uint128 liquidity, , , , ) = positionManager.positions(target);
         liquidity = uint128(uint256(liquidity * liquidityPercent) / 1e18);
 
@@ -655,27 +862,35 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         }
 
         // If completely closing position, then collect fees as well.
+        uint128 amount0Max;
+        uint128 amount1Max;
         if (liquidityPercent == 1e18) {
-            // Create fee collection params.
-            INonfungiblePositionManager.CollectParams memory collectParams = INonfungiblePositionManager.CollectParams({
-                tokenId: target,
-                recipient: address(this),
-                amount0Max: amount0,
-                amount1Max: amount1
-            });
-
-            // Save token balances.
-            ERC20 token0 = poolToData[pool].token0;
-            ERC20 token1 = poolToData[pool].token1;
-            uint256 token0Balance = token0.balanceOf(address(this));
-            uint256 token1Balance = token1.balanceOf(address(this));
-
-            // Collect fees.
-            positionManager.collect(collectParams);
-
-            amount0 = uint128(token0.balanceOf(address(this)) - token0Balance);
-            amount1 = uint128(token1.balanceOf(address(this)) - token1Balance);
+            amount0Max = type(uint128).max;
+            amount1Max = type(uint128).max;
+        } else {
+            // Otherwise only collect principal.
+            amount0Max = amount0;
+            amount1Max = amount1;
         }
+        // Create fee collection params.
+        INonfungiblePositionManager.CollectParams memory collectParams = INonfungiblePositionManager.CollectParams({
+            tokenId: target,
+            recipient: address(this),
+            amount0Max: amount0Max,
+            amount1Max: amount1Max
+        });
+
+        // Save token balances.
+        ERC20 token0 = poolToData[pool].token0;
+        ERC20 token1 = poolToData[pool].token1;
+        uint256 token0Balance = token0.balanceOf(address(this));
+        uint256 token1Balance = token1.balanceOf(address(this));
+
+        // Collect fees.
+        positionManager.collect(collectParams);
+
+        amount0 = uint128(token0.balanceOf(address(this)) - token0Balance);
+        amount1 = uint128(token1.balanceOf(address(this)) - token1Balance);
 
         return (amount0, amount1);
     }
@@ -704,132 +919,9 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         order.tail = 0;
     }
 
-    ERC20 public WETH = ERC20(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
-
-    function claimOrder(
-        IUniswapV3Pool pool,
-        uint256 userDataId,
-        address user
-    ) external returns (uint256) {
-        Claim storage userClaim = claim[userDataId];
-        uint256 userLength = userData[userDataId].length;
-
-        // Transfer fee in.
-        WETH.safeTransferFrom(msg.sender, address(this), userClaim.feePerUser);
-
-        for (uint256 i; i < userLength; ++i) {
-            if (userData[userDataId][i].user == user) {
-                // Found our user we are claiming for.
-                // Calculate owed amount.
-                uint256 totalTokenDeposited;
-                uint256 totalTokenOut;
-                ERC20 tokenOut;
-                if (userClaim.direction) {
-                    totalTokenDeposited = userClaim.token0Amount;
-                    totalTokenOut = userClaim.token1Amount;
-                    tokenOut = poolToData[pool].token1;
-                } else {
-                    totalTokenDeposited = userClaim.token1Amount;
-                    totalTokenOut = userClaim.token0Amount;
-                    tokenOut = poolToData[pool].token0;
-                }
-
-                uint256 owed = (totalTokenOut * userData[userDataId][i].depositAmount) / totalTokenDeposited;
-
-                // Remove user that claimed from array.
-                userData[userDataId][i] = UserData({
-                    user: userData[userDataId][userLength - 1].user,
-                    depositAmount: userData[userDataId][userLength - 1].depositAmount
-                });
-                delete userData[userDataId][userLength - 1];
-
-                // Transfer tokens owed to user.
-                tokenOut.safeTransfer(user, owed);
-                return owed;
-            }
-        }
-
-        revert("User not found");
-    }
-
-    function cancelOrder(
-        IUniswapV3Pool pool,
-        int24 targetTick,
-        bool direction
-    ) external returns (uint128 amount0, uint128 amount1) {
-        // Make sure order is OTM.
-        (, int24 tick, , , , , ) = pool.slot0();
-
-        // Determine upper and lower ticks.
-        int24 upper;
-        int24 lower;
-        {
-            int24 tickSpacing = pool.tickSpacing();
-            // TODO is it safe to assume tickSpacing is always positive?
-            // Make sure targetTick is divisible by spacing.
-            if (targetTick % tickSpacing != 0) revert("Invalid target tick");
-            if (direction) {
-                upper = targetTick;
-                lower = targetTick - tickSpacing;
-            } else {
-                upper = targetTick + tickSpacing;
-                lower = targetTick;
-            }
-        }
-        // Validate lower, upper,and direction.
-        {
-            OrderStatus status = _getOrderStatus(tick, lower, upper, direction);
-            if (status != OrderStatus.OTM) revert("Invalid Order");
-        }
-
-        // Get the position id.
-        uint256 positionId = getPositionFromTicks[lower][upper];
-
-        if (positionId == 0) revert("Invalid position");
-
-        uint256 liquidityPercentToTake;
-
-        // Get the users deposit amount in the order.
-        {
-            Order storage order = orderLinkedList[positionId];
-            uint256 userDataId = order.userDataId;
-            uint256 userLength = userData[userDataId].length;
-            for (uint256 i; i < userLength; ++i) {
-                if (userData[userDataId][i].user == msg.sender) {
-                    // Found our user.
-                    uint96 depositAmount = userData[userDataId][i].depositAmount;
-                    if (order.direction) {
-                        if (order.token0Amount == depositAmount) liquidityPercentToTake = 1e18;
-                        else {
-                            liquidityPercentToTake = (1e18 * depositAmount) / order.token0Amount;
-                        }
-                    } else {
-                        if (order.token1Amount == depositAmount) liquidityPercentToTake = 1e18;
-                        else {
-                            liquidityPercentToTake = (1e18 * depositAmount) / order.token1Amount;
-                        }
-                    }
-
-                    // Remove user from array.
-                    userData[userDataId][i] = UserData({
-                        user: userData[userDataId][userLength - 1].user,
-                        depositAmount: userData[userDataId][userLength - 1].depositAmount
-                    });
-                    delete userData[userDataId][userLength - 1];
-                } else if (i == userLength - 1) {
-                    revert("User not found");
-                }
-            }
-
-            (amount0, amount1) = _takeFromPosition(positionId, pool, liquidityPercentToTake);
-            if (liquidityPercentToTake == 1e18) _removeOrderFromList(positionId, pool, order);
-        }
-
-        if (amount0 > 0) poolToData[pool].token0.safeTransfer(msg.sender, amount0);
-        else if (amount1 > 0) poolToData[pool].token1.safeTransfer(msg.sender, amount1);
-        else revert("No liquidity in order");
-        // else Determine users share of liquidity and withdraw
-    }
+    /*//////////////////////////////////////////////////////////////
+                            VIEW LOGIC
+    //////////////////////////////////////////////////////////////*/
 
     function viewList(IUniswapV3Pool pool) public view returns (uint256[10] memory heads, uint256[10] memory tails) {
         uint256 next = poolToData[pool].centerHead;
@@ -838,6 +930,14 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             Order memory target = orderLinkedList[next];
             heads[i] = next;
             next = target.head;
+        }
+
+        next = poolToData[pool].centerTail;
+        for (uint256 i; i < 10; ++i) {
+            if (next == 0) break;
+            Order memory target = orderLinkedList[next];
+            tails[i] = next;
+            next = target.tail;
         }
     }
 }
