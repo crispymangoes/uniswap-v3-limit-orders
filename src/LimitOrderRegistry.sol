@@ -74,8 +74,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     // How users claim their tokens, just need to pass in the uint128 userDataId
     mapping(uint256 => Claim) public claim;
 
-    mapping(address => mapping(bytes32 => bool)) public poolToTickBoundHash; // Track whether we have used a tick upper and lower bound for a pool.
-
     mapping(int24 => mapping(int24 => uint256)) public getPositionFromTicks; // maps lower -> upper -> positionId
 
     /**
@@ -221,7 +219,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             // Create new LP position(which adds liquidity)
             positionId = _mintPosition(pool, upper, lower, amount0, amount1, direction);
             // Order is not in the linked list, validate proposed spot.
-            _validateProposedSpotInList(proposedTail, proposedHead, lower, upper);
+            _validateProposedSpotInList(pool, proposedTail, proposedHead, lower, upper);
             // Add it to the list.
             _addPositionToList(proposedTail, proposedHead, positionId);
             // Set new orders upper and lower tick.
@@ -248,7 +246,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             } else {
                 // We already have this order.
                 // Order is not in the linked list, validate proposed spot.
-                _validateProposedSpotInList(proposedTail, proposedHead, lower, upper);
+                _validateProposedSpotInList(pool, proposedTail, proposedHead, lower, upper);
                 // Add it to the list.
                 _addPositionToList(proposedTail, proposedHead, positionId);
                 //  create a new userDataId, direction.
@@ -325,37 +323,40 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     }
 
     function _validateProposedSpotInList(
+        IUniswapV3Pool pool,
         uint256 tail,
         uint256 head,
         int24 lower,
         int24 upper
     ) internal view {
-        // if (head == 0 && tail == 0)
-        //     if () {revert("Invalid Proposal");}
-        // if (tail == 0) {
-        //     Order memory headOrder = orderLinkedList[head];
-        //     // head.tail must be zero
-        //     if (headOrder.tail != 0) revert("Invalid Proposal");
-        //     // head lowerTick >= upper
-        //     if (headOrder.tickLower < upper) revert("Invalid Proposal");
-        // } else if (head == 0) {
-        //     Order memory tailOrder = orderLinkedList[tail];
-        //     // tail.head must be zero
-        //     if (tailOrder.head != 0) revert("Invalid Proposal");
-        //     // tail upperTick <= lower
-        //     if (tailOrder.tickUpper > lower) revert("Invalid Proposal");
-        // } else {
-        //     Order memory headOrder = orderLinkedList[head];
-        //     // head.tail == tail
-        //     if (headOrder.tail != tail) revert("Invalid Proposal");
-        //     // head lower tick >= upper
-        //     if (headOrder.tickLower < upper) revert("Invalid Proposal");
-        //     Order memory tailOrder = orderLinkedList[tail];
-        //     // tail.head == head
-        //     if (tailOrder.head != head) revert("Invalid Proposal");
-        //     // tail upper tick <= lower
-        //     if (tailOrder.tickUpper > lower) revert("Invalid Proposal");
-        // }
+        if (head == 0 && tail == 0) {
+            if (poolToData[pool].centerHead != 0 || poolToData[pool].centerTail != 0) {
+                revert("Invalid Proposal");
+            }
+        } else if (tail == 0) {
+            Order memory headOrder = orderLinkedList[head];
+            // head.tail must be zero
+            if (headOrder.tail != 0) revert("Invalid Proposal");
+            // head lowerTick >= upper
+            if (headOrder.tickLower < upper) revert("Invalid Proposal");
+        } else if (head == 0) {
+            Order memory tailOrder = orderLinkedList[tail];
+            // tail.head must be zero
+            if (tailOrder.head != 0) revert("Invalid Proposal");
+            // tail upperTick <= lower
+            if (tailOrder.tickUpper > lower) revert("Invalid Proposal");
+        } else {
+            Order memory headOrder = orderLinkedList[head];
+            // head.tail == tail
+            if (headOrder.tail != tail) revert("Invalid Proposal");
+            // head lower tick >= upper
+            if (headOrder.tickLower < upper) revert("Invalid Proposal");
+            Order memory tailOrder = orderLinkedList[tail];
+            // tail.head == head
+            if (tailOrder.head != head) revert("Invalid Proposal");
+            // tail upper tick <= lower
+            if (tailOrder.tickUpper > lower) revert("Invalid Proposal");
+        }
     }
 
     function _addPositionToList(
@@ -447,11 +448,9 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         });
 
         // Supply liquidity to pool.
-        (uint256 tokenId, , uint256 amount0Act, uint256 amount1Act) = positionManager.mint(params);
+        (uint256 tokenId, , , ) = positionManager.mint(params);
 
         if (tokenId == 0) revert("Zero Token Id not valid");
-
-        if (amount0Act != amount0 || amount1Act != amount1) revert("Did not use full amount");
 
         return tokenId;
     }
@@ -750,7 +749,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             }
         }
 
-        // revert("User not found");
+        revert("User not found");
     }
 
     function cancelOrder(
@@ -830,5 +829,15 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         else if (amount1 > 0) poolToData[pool].token1.safeTransfer(msg.sender, amount1);
         else revert("No liquidity in order");
         // else Determine users share of liquidity and withdraw
+    }
+
+    function viewList(IUniswapV3Pool pool) public view returns (uint256[10] memory heads, uint256[10] memory tails) {
+        uint256 next = poolToData[pool].centerHead;
+        for (uint256 i; i < 10; ++i) {
+            if (next == 0) break;
+            Order memory target = orderLinkedList[next];
+            heads[i] = next;
+            next = target.head;
+        }
     }
 }

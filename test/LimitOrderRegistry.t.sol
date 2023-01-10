@@ -119,6 +119,64 @@ contract LimitOrderRegistryTest is Test {
         console.log("USDC Received", USDC.balanceOf(address(this)));
     }
 
+    function testLinkedListCreation() external {
+        registry.setMinimumAssets(1, USDC);
+        registry.setMinimumAssets(1, WETH);
+
+        registry.setupLimitOrder(USDC_WETH_05_POOL, 0);
+        // Current tick 204332
+        // Current block 16371089
+
+        // Create orders to buy WETH.
+        uint256 amount = 1_000e6;
+        deal(address(USDC), address(this), amount);
+        USDC.approve(address(registry), amount);
+        registry.newOrder(USDC_WETH_05_POOL, 204350, uint96(amount), true, 0, 0);
+
+        amount = 1_000e6;
+        deal(address(USDC), address(this), amount);
+        uint256 targetTail = registry.getPositionFromTicks(204340, 204350);
+        USDC.approve(address(registry), amount);
+        registry.newOrder(USDC_WETH_05_POOL, 204450, uint96(amount), true, 0, targetTail);
+
+        amount = 1_000e6;
+        deal(address(USDC), address(this), amount);
+        USDC.approve(address(registry), amount);
+        targetTail = registry.getPositionFromTicks(204440, 204450);
+        registry.newOrder(USDC_WETH_05_POOL, 204550, uint96(amount), true, 0, targetTail);
+
+        amount = 1_000e6;
+        deal(address(USDC), address(this), amount);
+        USDC.approve(address(registry), amount);
+        targetTail = registry.getPositionFromTicks(204340, 204350);
+        uint256 targetHead = registry.getPositionFromTicks(204440, 204450);
+        registry.newOrder(USDC_WETH_05_POOL, 204370, uint96(amount), true, targetHead, targetTail);
+
+        // Now create an orders to sell WETH.
+        amount = 1e18;
+        deal(address(WETH), address(this), amount);
+        WETH.approve(address(registry), amount);
+        targetHead = registry.getPositionFromTicks(204340, 204350);
+        registry.newOrder(USDC_WETH_05_POOL, 204320, uint96(amount), false, targetHead, 0);
+
+        amount = 1e18;
+        deal(address(WETH), address(this), amount);
+        WETH.approve(address(registry), amount);
+        targetHead = registry.getPositionFromTicks(204320, 204330);
+        registry.newOrder(USDC_WETH_05_POOL, 204240, uint96(amount), false, targetHead, 0);
+
+        amount = 1e18;
+        deal(address(WETH), address(this), amount);
+        WETH.approve(address(registry), amount);
+        targetHead = registry.getPositionFromTicks(204240, 204250);
+        registry.newOrder(USDC_WETH_05_POOL, 204140, uint96(amount), false, targetHead, 0);
+
+        (uint256[10] memory heads, uint256[10] memory tails) = registry.viewList(USDC_WETH_05_POOL);
+        for (uint256 i; i < 10; i++) {
+            console.log(i, heads[i], tails[i]);
+        }
+    }
+
     // ============================================= ADDRESS TEST =============================================
 
     // function testSetAddress() external {
