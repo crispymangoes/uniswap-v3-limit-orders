@@ -367,48 +367,95 @@ contract LimitOrderRegistryTest is Test {
         registry.cancelOrder(USDC_WETH_05_POOL, 204350, true);
     }
 
-    // TODO test with negative tick values.
+    // TODO add tests where proposed spot uses position Ids not owned by registry, and also where proposed spot is wrong, going into each of the if else loops.
+    function testPositionValidationReverts() external {
+        registry.setMinimumAssets(1, USDC);
+        registry.setMinimumAssets(1, WETH);
+        registry.setupLimitOrder(USDC_WETH_05_POOL, 0);
+
+        // Fill list with multiple orders.
+        // Create orders to buy WETH.
+        uint256 amount = 1_000e6;
+        deal(address(USDC), address(this), amount);
+        USDC.approve(address(registry), amount);
+        registry.newOrder(USDC_WETH_05_POOL, 204350, uint96(amount), true, 0, 0);
+
+        amount = 1_000e6;
+        deal(address(USDC), address(this), amount);
+        uint256 targetTail = registry.getPositionFromTicks(204340, 204350);
+        USDC.approve(address(registry), amount);
+        registry.newOrder(USDC_WETH_05_POOL, 204450, uint96(amount), true, 0, targetTail);
+
+        amount = 1_000e6;
+        deal(address(USDC), address(this), amount);
+        USDC.approve(address(registry), amount);
+        targetTail = registry.getPositionFromTicks(204440, 204450);
+        registry.newOrder(USDC_WETH_05_POOL, 204550, uint96(amount), true, 0, targetTail);
+
+        amount = 1_000e6;
+        deal(address(USDC), address(this), amount);
+        USDC.approve(address(registry), amount);
+        targetTail = registry.getPositionFromTicks(204340, 204350);
+        uint256 targetHead = registry.getPositionFromTicks(204440, 204450);
+        registry.newOrder(USDC_WETH_05_POOL, 204370, uint96(amount), true, targetHead, targetTail);
+
+        // Now create an orders to sell WETH.
+        amount = 1e18;
+        deal(address(WETH), address(this), amount);
+        WETH.approve(address(registry), amount);
+        targetHead = registry.getPositionFromTicks(204340, 204350);
+        registry.newOrder(USDC_WETH_05_POOL, 204320, uint96(amount), false, targetHead, 0);
+
+        amount = 1e18;
+        deal(address(WETH), address(this), amount);
+        WETH.approve(address(registry), amount);
+        targetHead = registry.getPositionFromTicks(204320, 204330);
+        registry.newOrder(USDC_WETH_05_POOL, 204240, uint96(amount), false, targetHead, 0);
+
+        amount = 1e18;
+        deal(address(WETH), address(this), amount);
+        WETH.approve(address(registry), amount);
+        targetHead = registry.getPositionFromTicks(204240, 204250);
+        registry.newOrder(USDC_WETH_05_POOL, 204140, uint96(amount), false, targetHead, 0);
+
+        // Try proposing a head that is not in list.
+        amount = 1_000e6;
+        deal(address(USDC), address(this), amount);
+        targetHead = 11111;
+        USDC.approve(address(registry), amount);
+        vm.expectRevert(bytes("head not in list"));
+        registry.newOrder(USDC_WETH_05_POOL, 207450, uint96(amount), true, targetHead, 0);
+
+        amount = 1e18;
+        deal(address(WETH), address(this), amount);
+        WETH.approve(address(registry), amount);
+        vm.expectRevert(bytes("head not in list"));
+        registry.newOrder(USDC_WETH_05_POOL, 200140, uint96(amount), false, targetHead, 0);
+
+        // Try proposing a tail that is not in list.
+        amount = 1_000e6;
+        deal(address(USDC), address(this), amount);
+        targetTail = 11111;
+        USDC.approve(address(registry), amount);
+        vm.expectRevert(bytes("tail not in list"));
+        registry.newOrder(USDC_WETH_05_POOL, 207450, uint96(amount), true, 0, targetTail);
+
+        amount = 1e18;
+        deal(address(WETH), address(this), amount);
+        WETH.approve(address(registry), amount);
+        vm.expectRevert(bytes("tail not in list"));
+        registry.newOrder(USDC_WETH_05_POOL, 200140, uint96(amount), false, 0, targetTail);
+    }
 
     // TODO test where upkeep only fulfills some of the orders like if orders 1,2,3,4,5 are ready, if it only fills 2,4, are 1,3,5 still in the proper linked list order
     // TODO cancel an order you are not in.
     // TODO try to enter an order that is ITM.
-    // ============================================= ADDRESS TEST =============================================
 
-    // function testSetAddress() external {
-    //     address newAddress = vm.addr(4);
-
-    //     registry.setAddress(0, newAddress);
-
-    //     assertEq(registry.getAddress(0), newAddress, "Should set to new address");
-    // }
-
-    // function testSetAddressOfInvalidId() external {
-    //     address newAddress = vm.addr(4);
+    // TODO test with negative tick values. This was done on testnet and seemed to work fine.
+    // Create order with wrong direction
 
     //     vm.expectRevert(abi.encodeWithSelector(Registry.Registry__ContractNotRegistered.selector, 999));
     //     registry.setAddress(999, newAddress);
-    // }
-
-    // function testSetApprovedForDepositOnBehalf() external {
-    //     address router = vm.addr(333);
-    //     assertTrue(!registry.approvedForDepositOnBehalf(router), "Router should not be set up as a depositor.");
-    //     // Give approval.
-    //     registry.setApprovedForDepositOnBehalf(router, true);
-    //     assertTrue(registry.approvedForDepositOnBehalf(router), "Router should be set up as a depositor.");
-
-    //     // Revoke approval.
-    //     registry.setApprovedForDepositOnBehalf(router, false);
-    //     assertTrue(!registry.approvedForDepositOnBehalf(router), "Router should not be set up as a depositor.");
-    // }
-
-    // function testSetFeeDistributor() external {
-    //     bytes32 validCosmosAddress = hex"000000000000000000000000ffffffffffffffffffffffffffffffffffffffff";
-    //     // Try setting an invalid fee distributor.
-    //     vm.expectRevert(bytes(abi.encodeWithSelector(Registry.Registry__InvalidCosmosAddress.selector)));
-    //     registry.setFeesDistributor(hex"0000000000000000000000010000000000000000000000000000000000000000");
-
-    //     registry.setFeesDistributor(validCosmosAddress);
-    //     assertEq(registry.feesDistributor(), validCosmosAddress, "Fee distributor should equal `validCosmosAddress`.");
     // }
 
     function _swap(

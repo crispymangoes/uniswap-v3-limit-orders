@@ -14,6 +14,7 @@ import { IKeeperRegistrar as KeeperRegistrar } from "src/interfaces/chainlink/IK
 import { console } from "@forge-std/Test.sol";
 
 // TODO are struct memory variables passed by reference? and if so can they be used to update a structs state using the = sign?
+// ^^^^ YES they are passed by reference, and you can use that memory struct to change the state of a storage struct.
 contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holder {
     using SafeTransferLib for ERC20;
 
@@ -158,18 +159,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                 77,
                 address(this)
             );
-            // bytes memory data = abi.encodeWithSelector(
-            //     FUNC_SELECTOR,
-            //     name,
-            //     hex"",
-            //     address(this),
-            //     UPKEEP_GAS_LIMIT,
-            //     msg.sender,
-            //     abi.encode(pool),
-            //     amount,
-            //     77,
-            //     msg.sender
-            // );
+            // TODO needs a abi.encode(0) for offchain config value located after abi.encode(pool)
+            // remove source
             LINK.transferAndCall(address(REGISTRAR), initialUpkeepFunds, upkeepCreationData);
         }
 
@@ -210,6 +201,10 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         }
     }
 
+    function withdrawNative() external onlyOwner {
+        WRAPPED_NATIVE.safeTransfer(msg.sender, WRAPPED_NATIVE.balanceOf(address(this)));
+    }
+
     /*//////////////////////////////////////////////////////////////
                         USER ORDER MANAGEMENT LOGIC
     //////////////////////////////////////////////////////////////*/
@@ -223,6 +218,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         uint256 proposedHead,
         uint256 proposedTail
     ) external {
+        if (address(poolToData[pool].token0) == address(0)) revert("Pool not set up");
+
         (, int24 tick, , , , , ) = pool.slot0();
 
         // Determine upper and lower ticks.
@@ -614,23 +611,47 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             }
         } else if (tail == 0) {
             Order memory headOrder = orderLinkedList[head];
+            if (
+                poolToData[pool].centerHead != head &&
+                poolToData[pool].centerTail != head &&
+                headOrder.tail == 0 &&
+                headOrder.head == 0
+            ) revert("head not in list");
             // head.tail must be zero
             if (headOrder.tail != 0) revert("Invalid Proposal");
             // head lowerTick >= upper
             if (headOrder.tickLower < upper) revert("Invalid Proposal");
         } else if (head == 0) {
             Order memory tailOrder = orderLinkedList[tail];
+            if (
+                poolToData[pool].centerHead != tail &&
+                poolToData[pool].centerTail != tail &&
+                tailOrder.tail == 0 &&
+                tailOrder.head == 0
+            ) revert("tail not in list");
             // tail.head must be zero
             if (tailOrder.head != 0) revert("Invalid Proposal");
             // tail upperTick <= lower
             if (tailOrder.tickUpper > lower) revert("Invalid Proposal");
         } else {
             Order memory headOrder = orderLinkedList[head];
+            if (
+                poolToData[pool].centerHead != head &&
+                poolToData[pool].centerTail != head &&
+                headOrder.tail == 0 &&
+                headOrder.head == 0
+            ) revert("head not in list");
             // head.tail == tail
             if (headOrder.tail != tail) revert("Invalid Proposal");
             // head lower tick >= upper
             if (headOrder.tickLower < upper) revert("Invalid Proposal");
             Order memory tailOrder = orderLinkedList[tail];
+            if (
+                poolToData[pool].centerHead != tail &&
+                poolToData[pool].centerTail != tail &&
+                tailOrder.tail == 0 &&
+                tailOrder.head == 0
+            ) revert("tail not in list");
             // tail.head == head
             if (tailOrder.head != head) revert("Invalid Proposal");
             // tail upper tick <= lower
@@ -703,6 +724,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         uint128 amount1,
         bool direction
     ) internal returns (uint256) {
+        // Read these values from state in the contract bs grabbing them from the pool.
         address token0 = pool.token0();
         address token1 = pool.token1();
         if (direction) ERC20(token0).safeApprove(address(positionManager), amount0);
