@@ -546,8 +546,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
      *         3) The attacker can not use a flash loan so they must have a large sum of capital.
      *         4) Performing this attack exposes the attacker to arbitrage risk where other bots
      *            will try to arbitrage the attackers pool.
-     * @dev Technically we only need to enforce the Center ITM check only if we are actually updating the center.
-     *      TODO in the future this change can be made for slightly more robust and efficient code.
      */
     function _updateCenter(
         IUniswapV3Pool pool,
@@ -556,106 +554,99 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         int24 upper,
         int24 lower
     ) internal {
-        // If the center is not set for the pool, then positionId is the new center.
-        uint256 centerHead = poolToData[pool].centerHead;
-        uint256 centerTail = poolToData[pool].centerTail;
-        if (lower > currentTick && centerHead == 0) {
-            poolToData[pool].centerHead = positionId;
-        } else if (upper < currentTick && centerTail == 0) poolToData[pool].centerTail = positionId;
-        else {
-            // Check if center or center tail is ITM, if so revert, see notice.
-            Order memory centerHeadOrder = orderLinkedList[centerHead];
-            Order memory centerTailOrder = orderLinkedList[centerTail];
-            if (centerHead != 0) {
-                OrderStatus status = _getOrderStatus(
-                    currentTick,
-                    centerHeadOrder.tickLower,
-                    centerHeadOrder.tickUpper,
-                    centerHeadOrder.direction
-                );
-                if (status == OrderStatus.ITM) revert("User can not update center while orders are ITM.");
+        PoolData memory data = poolToData[pool];
+        if (currentTick > upper) {
+            // Check if centerTail needs to be updated.
+            if (data.centerTail == 0) {
+                // Currently no centerTail, so this order must become it.
+                // Make sure the centerHead is not ITM, if it has been set.
+                if (data.centerHead != 0) {
+                    Order memory centerHead = orderLinkedList[data.centerHead];
+                    _revertIfOrderITM(currentTick, centerHead);
+                }
+                poolToData[pool].centerTail = positionId;
+            } else {
+                Order memory centerTail = orderLinkedList[data.centerTail];
+                if (upper > centerTail.tickUpper) {
+                    // New position is closer to the current pool tick, so it becomes new centerTail.
+                    // Make sure current centerTail is OTM.
+                    _revertIfOrderITM(currentTick, centerTail);
+                    // Make sure the centerHead is not ITM, if it has been set.
+                    if (data.centerHead != 0) {
+                        Order memory centerHead = orderLinkedList[data.centerHead];
+                        _revertIfOrderITM(currentTick, centerHead);
+                    }
+                    poolToData[pool].centerTail = positionId;
+                }
+                // else nothing to do.
             }
-            if (centerTail != 0) {
-                OrderStatus status = _getOrderStatus(
-                    currentTick,
-                    centerTailOrder.tickLower,
-                    centerTailOrder.tickUpper,
-                    centerTailOrder.direction
-                );
-                if (status == OrderStatus.ITM) revert("User can not update center while orders are ITM.");
+        } else if (currentTick < lower) {
+            // Check if centerHead needs to be updated.
+            if (data.centerHead == 0) {
+                // Currently no centerHead, so this order must become it.
+                // Make sure the centerTail is not ITM, if it has been set.
+                if (data.centerTail != 0) {
+                    Order memory centerTail = orderLinkedList[data.centerTail];
+                    _revertIfOrderITM(currentTick, centerTail);
+                }
+                poolToData[pool].centerHead = positionId;
+            } else {
+                Order memory centerHead = orderLinkedList[data.centerHead];
+                if (lower < centerHead.tickLower) {
+                    // New position is closer to the current pool tick, so it becomes new centerHead.
+                    // Make sure current centerHead is OTM.
+                    _revertIfOrderITM(currentTick, centerHead);
+                    // Make sure the centerTail is not ITM, if it has been set.
+                    if (data.centerTail != 0) {
+                        Order memory centerTail = orderLinkedList[data.centerTail];
+                        _revertIfOrderITM(currentTick, centerTail);
+                    }
+                    poolToData[pool].centerHead = positionId;
+                }
+                // else nothing to do.
             }
+        }
+    }
 
-            // We already know provided upper and lower tick values are OTM, so just check if lower tick is greater than
-            // the current tick.
-            if (lower > currentTick) {
-                // Check if upper is less than the lower of the center order, if so make this new order the center.
-                if (upper < centerHeadOrder.tickLower) poolToData[pool].centerHead = positionId;
-                // else do nothing the center is correct.
-            } else if (upper < currentTick) {
-                if (lower > centerTailOrder.tickUpper) poolToData[pool].centerTail = positionId;
-            }
-            // else center is correct.
+    function _revertIfOrderITM(int24 currentTick, Order memory order) internal pure {
+        OrderStatus status = _getOrderStatus(currentTick, order.tickLower, order.tickUpper, order.direction);
+        if (status == OrderStatus.ITM) revert("User can not update center while orders are ITM.");
+    }
+
+    function _checkThatNodeIsInList(
+        uint256 node,
+        Order memory order,
+        PoolData memory data
+    ) internal pure {
+        if (order.head == 0 && order.tail == 0) {
+            // Possible but the order my be centerTail or centerHead.
+            if (data.centerHead != node && data.centerTail != node) revert("Order not in list");
         }
     }
 
     function _validateProposedSpotInList(
         IUniswapV3Pool pool,
-        uint256 tail,
-        uint256 head,
+        uint256 proposedTail,
+        uint256 proposedHead,
         int24 lower,
         int24 upper
     ) internal view {
-        if (head == 0 && tail == 0) {
-            if (poolToData[pool].centerHead != 0 || poolToData[pool].centerTail != 0) {
-                revert("Invalid Proposal");
-            }
-        } else if (tail == 0) {
-            Order memory headOrder = orderLinkedList[head];
-            if (
-                poolToData[pool].centerHead != head &&
-                poolToData[pool].centerTail != head &&
-                headOrder.tail == 0 &&
-                headOrder.head == 0
-            ) revert("head not in list");
-            // head.tail must be zero
-            if (headOrder.tail != 0) revert("Invalid Proposal");
-            // head lowerTick >= upper
-            if (headOrder.tickLower < upper) revert("Invalid Proposal");
-        } else if (head == 0) {
-            Order memory tailOrder = orderLinkedList[tail];
-            if (
-                poolToData[pool].centerHead != tail &&
-                poolToData[pool].centerTail != tail &&
-                tailOrder.tail == 0 &&
-                tailOrder.head == 0
-            ) revert("tail not in list");
-            // tail.head must be zero
-            if (tailOrder.head != 0) revert("Invalid Proposal");
-            // tail upperTick <= lower
-            if (tailOrder.tickUpper > lower) revert("Invalid Proposal");
-        } else {
-            Order memory headOrder = orderLinkedList[head];
-            if (
-                poolToData[pool].centerHead != head &&
-                poolToData[pool].centerTail != head &&
-                headOrder.tail == 0 &&
-                headOrder.head == 0
-            ) revert("head not in list");
-            // head.tail == tail
-            if (headOrder.tail != tail) revert("Invalid Proposal");
-            // head lower tick >= upper
-            if (headOrder.tickLower < upper) revert("Invalid Proposal");
-            Order memory tailOrder = orderLinkedList[tail];
-            if (
-                poolToData[pool].centerHead != tail &&
-                poolToData[pool].centerTail != tail &&
-                tailOrder.tail == 0 &&
-                tailOrder.head == 0
-            ) revert("tail not in list");
-            // tail.head == head
-            if (tailOrder.head != head) revert("Invalid Proposal");
-            // tail upper tick <= lower
-            if (tailOrder.tickUpper > lower) revert("Invalid Proposal");
+        PoolData memory data = poolToData[pool];
+        if (proposedTail != 0) {
+            Order memory tailOrder = orderLinkedList[proposedTail];
+            _checkThatNodeIsInList(proposedTail, tailOrder, data);
+            if (tailOrder.tickUpper > lower) revert("Bad tail");
+            if (tailOrder.head != proposedHead) revert("Skipping nodes.");
+        }
+        if (proposedHead != 0) {
+            Order memory headOrder = orderLinkedList[proposedHead];
+            _checkThatNodeIsInList(proposedHead, headOrder, data);
+            if (headOrder.tickLower < upper) revert("Bad head");
+            if (headOrder.tail != proposedTail) revert("Skipping nodes.");
+        }
+        if (proposedHead == 0 && proposedTail == 0) {
+            // Make sure the list is empty.
+            if (data.centerHead != 0 || data.centerTail != 0) revert("List not empty");
         }
     }
 
@@ -752,6 +743,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         // Supply liquidity to pool.
         (uint256 tokenId, , , ) = positionManager.mint(params);
 
+        // Revert if tokenId received is 0 id.
+        // Zero token id is reserved for NULL values in linked list.
         if (tokenId == 0) revert("Zero Token Id not valid");
 
         return tokenId;
@@ -960,6 +953,41 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             Order memory target = orderLinkedList[next];
             tails[i] = next;
             next = target.tail;
+        }
+    }
+
+    function findSpot(
+        IUniswapV3Pool pool,
+        uint256 startingNode,
+        int24 targetTick
+    ) external view returns (uint256 proposedHead, uint256 proposedTail) {
+        if (startingNode == 0) {
+            PoolData memory data = poolToData[pool];
+            if (data.centerHead != 0) startingNode = data.centerHead;
+            else if (data.centerTail != 0) startingNode = data.centerTail;
+            else return (0, 0);
+        }
+        Order memory node = orderLinkedList[startingNode];
+        uint256 nodeId = startingNode;
+        bool direction = targetTick > node.tickUpper ? true : false;
+        while (true) {
+            if (direction) {
+                // Go until we find an order with a tick lower GREATER or equal to targetTick, then set proposedTail equal to the tail, and proposed head to the current node.
+                if (node.tickLower >= targetTick) {
+                    return (nodeId, node.tail);
+                } else {
+                    nodeId = node.head;
+                    node = orderLinkedList[nodeId];
+                }
+            } else {
+                // Go until we find tick upper that is LESS than or equal to targetTick
+                if (node.tickUpper <= targetTick) {
+                    return (node.head, nodeId);
+                } else {
+                    nodeId = node.tail;
+                    node = orderLinkedList[nodeId];
+                }
+            }
         }
     }
 }
