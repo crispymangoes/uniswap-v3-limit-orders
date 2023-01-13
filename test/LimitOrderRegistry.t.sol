@@ -19,22 +19,21 @@ contract LimitOrderRegistryTest is Test {
 
     IUniswapV3Router private router = IUniswapV3Router(0xE592427A0AEce92De3Edee1F18E0157C05861564);
 
-    LinkTokenInterface private LINK = LinkTokenInterface(0x514910771AF9Ca656af840dff83E8264EcF986CA);
+    LinkTokenInterface private LINK = LinkTokenInterface(0xb0897686c545045aFc77CF20eC7A532E3120E0F1);
 
     KeeperRegistrar private REGISTRAR = KeeperRegistrar(0xDb8e8e2ccb5C033938736aa89Fe4fa1eDfD15a1d);
 
-    ERC20 private USDC = ERC20(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48);
-    ERC20 private WETH = ERC20(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
+    ERC20 private USDC = ERC20(0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174);
+    ERC20 private WETH = ERC20(0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619);
+    ERC20 private WMATIC = ERC20(0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270);
 
-    IUniswapV3Pool private USDC_WETH_05_POOL = IUniswapV3Pool(0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640);
+    IUniswapV3Pool private USDC_WETH_05_POOL = IUniswapV3Pool(0x45dDa9cb7c25131DF268515131f647d726f50608);
 
     function setUp() external {
-        registry = new LimitOrderRegistry(address(this), positionManger, WETH, LINK, REGISTRAR);
+        registry = new LimitOrderRegistry(address(this), positionManger, WMATIC, LINK, REGISTRAR);
     }
 
     // ========================================= INITIALIZATION TEST =========================================
-
-    function testInitialization() external {}
 
     // ============================================= HAPPY PATH TEST =============================================
 
@@ -50,12 +49,10 @@ contract LimitOrderRegistryTest is Test {
         deal(address(USDC), address(this), amount);
 
         // Current tick 204332
+        // 204367
         // Current block 16371089
         USDC.approve(address(registry), amount);
-        registry.newOrder(USDC_WETH_05_POOL, 204350, uint96(amount), true, 0, 0);
-
-        (, int24 tick, , , , , ) = USDC_WETH_05_POOL.slot0();
-        console.log(uint24(tick));
+        registry.newOrder(USDC_WETH_05_POOL, 204910, uint96(amount), true, 0);
 
         // Make a large swap to move the pool tick.
         address[] memory path = new address[](2);
@@ -72,19 +69,14 @@ contract LimitOrderRegistryTest is Test {
         _swap(path, poolFees, swapAmount);
 
         (upkeepNeeded, performData) = registry.checkUpkeep(abi.encode(USDC_WETH_05_POOL));
-        (IUniswapV3Pool pool, uint256[10] memory ordersToFulFill) = abi.decode(
-            performData,
-            (IUniswapV3Pool, uint256[10])
-        );
 
-        (, tick, , , , , ) = USDC_WETH_05_POOL.slot0();
-        console.log(uint24(tick));
+        assertTrue(upkeepNeeded, "Upkeep should be needed.");
 
         registry.performUpkeep(performData);
 
         deal(address(USDC), address(this), 0);
-        deal(address(WETH), address(this), 100_000 * 100_000);
-        WETH.approve(address(registry), 100_000 * 100_000);
+        deal(address(WMATIC), address(this), 100_000 * 100_000);
+        WMATIC.approve(address(registry), 100_000 * 100_000);
         registry.claimOrder(USDC_WETH_05_POOL, 1, address(this));
 
         // Now create an order to sell WETH.
@@ -94,7 +86,7 @@ contract LimitOrderRegistryTest is Test {
         // Current tick 204360
         // Current block 16371089
         WETH.approve(address(registry), amount);
-        registry.newOrder(USDC_WETH_05_POOL, 204340, uint96(amount), false, 0, 0);
+        registry.newOrder(USDC_WETH_05_POOL, 204900, uint96(amount), false, 0);
 
         // Make a large swap to move the pool tick.
         path = new address[](2);
@@ -105,26 +97,21 @@ contract LimitOrderRegistryTest is Test {
         poolFees[0] = 500;
 
         (upkeepNeeded, performData) = registry.checkUpkeep(abi.encode(USDC_WETH_05_POOL));
-        console.log("Upkeep Needed", upkeepNeeded);
 
         swapAmount = 2_000_000e6;
         deal(address(USDC), address(this), swapAmount);
         _swap(path, poolFees, swapAmount);
 
-        (, tick, , , , , ) = USDC_WETH_05_POOL.slot0();
-        console.log(uint24(tick));
-
         (upkeepNeeded, performData) = registry.checkUpkeep(abi.encode(USDC_WETH_05_POOL));
-        console.log("Upkeep Needed", upkeepNeeded);
+
+        assertTrue(upkeepNeeded, "Upkeep should be needed.");
 
         registry.performUpkeep(performData);
 
         deal(address(USDC), address(this), 0);
-        deal(address(WETH), address(this), 100_000 * 100_000);
-        WETH.approve(address(registry), 100_000 * 100_000);
+        deal(address(WMATIC), address(this), 100_000 * 100_000);
+        WMATIC.approve(address(registry), 100_000 * 100_000);
         registry.claimOrder(USDC_WETH_05_POOL, 2, address(this));
-
-        console.log("USDC Received", USDC.balanceOf(address(this)));
     }
 
     function testLinkedListCreation() external {
@@ -132,54 +119,47 @@ contract LimitOrderRegistryTest is Test {
         registry.setMinimumAssets(1, WETH);
 
         registry.setupLimitOrder(USDC_WETH_05_POOL, 0);
-        // Current tick 204332
+        // Current tick 204888
         // Current block 16371089
 
         // Create orders to buy WETH.
         uint256 amount = 1_000e6;
         deal(address(USDC), address(this), amount);
         USDC.approve(address(registry), amount);
-        registry.newOrder(USDC_WETH_05_POOL, 204350, uint96(amount), true, 0, 0);
-
-        amount = 1_000e6;
-        deal(address(USDC), address(this), amount);
-        uint256 targetTail = registry.getPositionFromTicks(204340, 204350);
-        USDC.approve(address(registry), amount);
-        registry.newOrder(USDC_WETH_05_POOL, 204450, uint96(amount), true, 0, targetTail);
+        registry.newOrder(USDC_WETH_05_POOL, 204900, uint96(amount), true, 0);
 
         amount = 1_000e6;
         deal(address(USDC), address(this), amount);
         USDC.approve(address(registry), amount);
-        targetTail = registry.getPositionFromTicks(204440, 204450);
-        registry.newOrder(USDC_WETH_05_POOL, 204550, uint96(amount), true, 0, targetTail);
+        registry.newOrder(USDC_WETH_05_POOL, 204950, uint96(amount), true, 0);
 
         amount = 1_000e6;
         deal(address(USDC), address(this), amount);
         USDC.approve(address(registry), amount);
-        targetTail = registry.getPositionFromTicks(204340, 204350);
-        uint256 targetHead = registry.getPositionFromTicks(204440, 204450);
-        registry.newOrder(USDC_WETH_05_POOL, 204370, uint96(amount), true, targetHead, targetTail);
+        registry.newOrder(USDC_WETH_05_POOL, 204970, uint96(amount), true, 0);
+
+        amount = 1_000e6;
+        deal(address(USDC), address(this), amount);
+        USDC.approve(address(registry), amount);
+        registry.newOrder(USDC_WETH_05_POOL, 204920, uint96(amount), true, 0);
 
         // Now create an orders to sell WETH.
         amount = 1e18;
         deal(address(WETH), address(this), amount);
         WETH.approve(address(registry), amount);
-        targetHead = registry.getPositionFromTicks(204340, 204350);
-        registry.newOrder(USDC_WETH_05_POOL, 204320, uint96(amount), false, targetHead, 0);
+        registry.newOrder(USDC_WETH_05_POOL, 204820, uint96(amount), false, 0);
 
         amount = 1e18;
         deal(address(WETH), address(this), amount);
         WETH.approve(address(registry), amount);
-        targetHead = registry.getPositionFromTicks(204320, 204330);
-        registry.newOrder(USDC_WETH_05_POOL, 204240, uint96(amount), false, targetHead, 0);
+        registry.newOrder(USDC_WETH_05_POOL, 204640, uint96(amount), false, 0);
 
         amount = 1e18;
         deal(address(WETH), address(this), amount);
         WETH.approve(address(registry), amount);
-        targetHead = registry.getPositionFromTicks(204240, 204250);
-        registry.newOrder(USDC_WETH_05_POOL, 204140, uint96(amount), false, targetHead, 0);
+        registry.newOrder(USDC_WETH_05_POOL, 204340, uint96(amount), false, 0);
 
-        (uint256[10] memory heads, uint256[10] memory tails) = registry.viewList(USDC_WETH_05_POOL);
+        // (uint256[10] memory heads, uint256[10] memory tails) = registry.viewList(USDC_WETH_05_POOL);
         // for (uint256 i; i < 10; i++) {
         //     console.log(i, heads[i], tails[i]);
         // }
@@ -193,7 +173,7 @@ contract LimitOrderRegistryTest is Test {
             uint24[] memory poolFees = new uint24[](1);
             poolFees[0] = 500;
 
-            uint256 swapAmount = 10_000e18;
+            uint256 swapAmount = 300e18;
             deal(address(WETH), address(this), swapAmount);
             _swap(path, poolFees, swapAmount);
         }
@@ -205,7 +185,7 @@ contract LimitOrderRegistryTest is Test {
             uint24[] memory poolFees = new uint24[](1);
             poolFees[0] = 500;
 
-            uint256 swapAmount = 13_000_000e6;
+            uint256 swapAmount = 390_000e6;
             deal(address(USDC), address(this), swapAmount);
             _swap(path, poolFees, swapAmount);
         }
@@ -217,24 +197,22 @@ contract LimitOrderRegistryTest is Test {
             uint24[] memory poolFees = new uint24[](1);
             poolFees[0] = 500;
 
-            uint256 swapAmount = 10_000e18;
+            uint256 swapAmount = 300e18;
             deal(address(WETH), address(this), swapAmount);
             _swap(path, poolFees, swapAmount);
         }
 
         (bool upkeepNeeded, bytes memory performData) = registry.checkUpkeep(abi.encode(USDC_WETH_05_POOL));
-        (IUniswapV3Pool pool, uint256[10] memory ordersToFulFill) = abi.decode(
-            performData,
-            (IUniswapV3Pool, uint256[10])
-        );
+        // (IUniswapV3Pool pool, uint256[10] memory ordersToFulFill) = abi.decode(
+        //     performData,
+        //     (IUniswapV3Pool, uint256[10])
+        // );
 
-        (, int24 tick, , , , , ) = USDC_WETH_05_POOL.slot0();
-        // console.log(uint24(tick));
+        // for (uint256 i; i < 10; ++i) {
+        //     console.log("Order", ordersToFulFill[i]);
+        // }
 
         assertTrue(upkeepNeeded, "Upkeep should be needed.");
-        // for (uint256 i; i < 10; ++i) {
-        //     console.log("Order", i, ordersToFulFill[i]);
-        // }
 
         registry.performUpkeep(performData);
 
@@ -251,22 +229,23 @@ contract LimitOrderRegistryTest is Test {
             uint24[] memory poolFees = new uint24[](1);
             poolFees[0] = 500;
 
-            uint256 swapAmount = 30_000_000e6;
+            uint256 swapAmount = 2_000_000e6;
             deal(address(USDC), address(this), swapAmount);
             _swap(path, poolFees, swapAmount);
         }
 
-        (, tick, , , , , ) = USDC_WETH_05_POOL.slot0();
+        // (, int24 tick, , , , , ) = USDC_WETH_05_POOL.slot0();
         // console.log(uint24(tick));
 
         (upkeepNeeded, performData) = registry.checkUpkeep(abi.encode(USDC_WETH_05_POOL));
 
-        assertTrue(upkeepNeeded, "Upkeep should not be needed.");
+        assertTrue(upkeepNeeded, "Upkeep should be needed.");
 
         registry.performUpkeep(performData);
 
         // Claim everything.
-        WETH.approve(address(registry), type(uint256).max);
+        deal(address(WMATIC), address(this), 1e18);
+        WMATIC.approve(address(registry), type(uint256).max);
         registry.claimOrder(USDC_WETH_05_POOL, 1, address(this));
         registry.claimOrder(USDC_WETH_05_POOL, 2, address(this));
         registry.claimOrder(USDC_WETH_05_POOL, 3, address(this));
@@ -276,7 +255,6 @@ contract LimitOrderRegistryTest is Test {
         registry.claimOrder(USDC_WETH_05_POOL, 7, address(this));
     }
 
-    // TODO test multiple users in 1 order
     function testMulitipleUsersInOneOrder() external {
         registry.setMinimumAssets(1, USDC);
         registry.setMinimumAssets(1, WETH);
@@ -284,19 +262,19 @@ contract LimitOrderRegistryTest is Test {
 
         address userA = vm.addr(10);
         address userB = vm.addr(100);
-        // Current tick 204332
+        // Current tick 204888
         // Current block 16371089
         vm.startPrank(userA);
         uint256 amount = 1_000e6;
         deal(address(USDC), userA, amount);
         USDC.approve(address(registry), amount);
-        registry.newOrder(USDC_WETH_05_POOL, 204350, uint96(amount), true, 0, 0);
+        registry.newOrder(USDC_WETH_05_POOL, 204900, uint96(amount), true, 0);
         vm.stopPrank();
 
         vm.startPrank(userB);
         deal(address(USDC), userB, amount);
         USDC.approve(address(registry), amount);
-        registry.newOrder(USDC_WETH_05_POOL, 204350, uint96(amount), true, 0, 0);
+        registry.newOrder(USDC_WETH_05_POOL, 204900, uint96(amount), true, 0);
         vm.stopPrank();
 
         // Swap to move pool tick.
@@ -308,7 +286,7 @@ contract LimitOrderRegistryTest is Test {
             uint24[] memory poolFees = new uint24[](1);
             poolFees[0] = 500;
 
-            uint256 swapAmount = 1_000e18;
+            uint256 swapAmount = 300e18;
             deal(address(WETH), address(this), swapAmount);
             _swap(path, poolFees, swapAmount);
         }
@@ -321,14 +299,14 @@ contract LimitOrderRegistryTest is Test {
         // Have both users claim their orders.
         uint256 expectedFeePerUser = 10e9 / 2;
         vm.startPrank(userA);
-        deal(address(WETH), userA, expectedFeePerUser);
-        WETH.approve(address(registry), expectedFeePerUser);
+        deal(address(WMATIC), userA, expectedFeePerUser);
+        WMATIC.approve(address(registry), expectedFeePerUser);
         registry.claimOrder(USDC_WETH_05_POOL, 1, userA);
         vm.stopPrank();
 
         vm.startPrank(userB);
-        deal(address(WETH), userB, expectedFeePerUser);
-        WETH.approve(address(registry), expectedFeePerUser);
+        deal(address(WMATIC), userB, expectedFeePerUser);
+        WMATIC.approve(address(registry), expectedFeePerUser);
         registry.claimOrder(USDC_WETH_05_POOL, 1, userB);
         vm.stopPrank();
 
@@ -351,217 +329,25 @@ contract LimitOrderRegistryTest is Test {
         uint256 amount = 1_000e6;
         deal(address(USDC), userA, amount);
         USDC.approve(address(registry), amount);
-        registry.newOrder(USDC_WETH_05_POOL, 204350, uint96(amount), true, 0, 0);
+        registry.newOrder(USDC_WETH_05_POOL, 204900, uint96(amount), true, 0);
         vm.stopPrank();
 
         vm.startPrank(userB);
         deal(address(USDC), userB, amount);
         USDC.approve(address(registry), amount);
-        registry.newOrder(USDC_WETH_05_POOL, 204350, uint96(amount), true, 0, 0);
+        registry.newOrder(USDC_WETH_05_POOL, 204900, uint96(amount), true, 0);
         vm.stopPrank();
 
         vm.prank(userA);
-        registry.cancelOrder(USDC_WETH_05_POOL, 204350, true);
+        registry.cancelOrder(USDC_WETH_05_POOL, 204900, true);
 
         vm.prank(userB);
-        registry.cancelOrder(USDC_WETH_05_POOL, 204350, true);
+        registry.cancelOrder(USDC_WETH_05_POOL, 204900, true);
     }
 
-    // TODO add tests where proposed spot uses position Ids not owned by registry, and also where proposed spot is wrong, going into each of the if else loops.
-    function testPositionValidationReverts() external {
-        registry.setMinimumAssets(1, USDC);
-        registry.setMinimumAssets(1, WETH);
-        registry.setupLimitOrder(USDC_WETH_05_POOL, 0);
-
-        // Fill list with multiple orders.
-        // Create orders to buy WETH.
-        uint256 amount = 1_000e6;
-        deal(address(USDC), address(this), amount);
-        USDC.approve(address(registry), amount);
-        registry.newOrder(USDC_WETH_05_POOL, 204350, uint96(amount), true, 0, 0);
-
-        amount = 1_000e6;
-        deal(address(USDC), address(this), amount);
-        uint256 targetTail = registry.getPositionFromTicks(204340, 204350);
-        USDC.approve(address(registry), amount);
-        registry.newOrder(USDC_WETH_05_POOL, 204450, uint96(amount), true, 0, targetTail);
-
-        amount = 1_000e6;
-        deal(address(USDC), address(this), amount);
-        USDC.approve(address(registry), amount);
-        targetTail = registry.getPositionFromTicks(204440, 204450);
-        registry.newOrder(USDC_WETH_05_POOL, 204550, uint96(amount), true, 0, targetTail);
-
-        amount = 1_000e6;
-        deal(address(USDC), address(this), amount);
-        USDC.approve(address(registry), amount);
-        targetTail = registry.getPositionFromTicks(204340, 204350);
-        uint256 targetHead = registry.getPositionFromTicks(204440, 204450);
-        registry.newOrder(USDC_WETH_05_POOL, 204370, uint96(amount), true, targetHead, targetTail);
-
-        // Now create an orders to sell WETH.
-        amount = 1e18;
-        deal(address(WETH), address(this), amount);
-        WETH.approve(address(registry), amount);
-        targetHead = registry.getPositionFromTicks(204340, 204350);
-        registry.newOrder(USDC_WETH_05_POOL, 204320, uint96(amount), false, targetHead, 0);
-
-        amount = 1e18;
-        deal(address(WETH), address(this), amount);
-        WETH.approve(address(registry), amount);
-        targetHead = registry.getPositionFromTicks(204320, 204330);
-        registry.newOrder(USDC_WETH_05_POOL, 204240, uint96(amount), false, targetHead, 0);
-
-        amount = 1e18;
-        deal(address(WETH), address(this), amount);
-        WETH.approve(address(registry), amount);
-        targetHead = registry.getPositionFromTicks(204240, 204250);
-        registry.newOrder(USDC_WETH_05_POOL, 204140, uint96(amount), false, targetHead, 0);
-
-        // ---------------------------- Proposing heads/tails not in list ----------------------------
-        // Try proposing a head that is not in list.
-        amount = 1_000e6;
-        deal(address(USDC), address(this), amount);
-        // Target head does not exist in the list.
-        targetHead = 11111;
-        USDC.approve(address(registry), amount);
-        vm.expectRevert(bytes("Order not in list"));
-        registry.newOrder(USDC_WETH_05_POOL, 207450, uint96(amount), true, targetHead, 0);
-
-        amount = 1e18;
-        deal(address(WETH), address(this), amount);
-        WETH.approve(address(registry), amount);
-        vm.expectRevert(bytes("Order not in list"));
-        registry.newOrder(USDC_WETH_05_POOL, 200140, uint96(amount), false, targetHead, 0);
-
-        // Try proposing a tail that is not in list.
-        amount = 1_000e6;
-        deal(address(USDC), address(this), amount);
-        // Target tail does not exist in the list.
-        targetTail = 11111;
-        USDC.approve(address(registry), amount);
-        vm.expectRevert(bytes("Order not in list"));
-        registry.newOrder(USDC_WETH_05_POOL, 207450, uint96(amount), true, 0, targetTail);
-
-        amount = 1e18;
-        deal(address(WETH), address(this), amount);
-        WETH.approve(address(registry), amount);
-        vm.expectRevert(bytes("Order not in list"));
-        registry.newOrder(USDC_WETH_05_POOL, 200140, uint96(amount), false, 0, targetTail);
-
-        // ---------------------------- Proposing Wrong spots ----------------------------
-        //                                                               Current Tick: 204332
-        //                                                                       v
-        // NULL <-> (204140 - 204150) <-> (204240 - 204250) <-> (204320 - 204330) <-> (204340 - 204350) <-> (204360 - 204370) <-> (204440 - 204450) <-> (204540 - 204550) <-> NULL
-        //                             ^                     ^
-        //                  Incorrect proposed spot    Correct spot
-        // Tail check passes, but head check fails since the proposed head has lower tick values.
-        amount = 1e18;
-        deal(address(WETH), address(this), amount);
-        WETH.approve(address(registry), amount);
-        vm.expectRevert(bytes("Bad head"));
-        registry.newOrder(USDC_WETH_05_POOL, 204300, uint96(amount), false, 408425, 408426);
-        (uint256 head, uint256 tail) = registry.findSpot(USDC_WETH_05_POOL, 0, 204300);
-        assertEq(head, 408424, "Wrong Head.");
-        assertEq(tail, 408425, "Wrong Tail.");
-
-        //                                                               Current Tick: 204332
-        //                                                                       v
-        // NULL <-> (204140 - 204150) <-> (204240 - 204250) <-> (204320 - 204330) <-> (204340 - 204350) <-> (204360 - 204370) <-> (204440 - 204450) <-> (204540 - 204550) <-> NULL
-        //                             ^                     ^
-        //                        Correct spot     Incorrect proposed spot
-        // Head check passes, but tail check fails since the proposed tail has higher tick values.
-        amount = 1e18;
-        deal(address(WETH), address(this), amount);
-        WETH.approve(address(registry), amount);
-        vm.expectRevert(bytes("Bad tail"));
-        registry.newOrder(USDC_WETH_05_POOL, 204200, uint96(amount), false, 408424, 408425);
-        (head, tail) = registry.findSpot(USDC_WETH_05_POOL, 0, 204200);
-        assertEq(head, 408425, "Wrong Head.");
-        assertEq(tail, 408426, "Wrong Tail.");
-
-        //                                                               Current Tick: 204332
-        //                                                                       v
-        // NULL <-> (204140 - 204150) <-> (204240 - 204250) <-> (204320 - 204330) <-> (204340 - 204350) <-> (204360 - 204370) <-> (204440 - 204450) <-> (204540 - 204550) <-> NULL
-        //                                                                                               ^                     ^
-        //                                                                                    Incorrect proposed spot    Correct spot
-        // Tail check passes, but head check fails since the proposed head has lower tick values.
-        amount = 1_000e6;
-        deal(address(USDC), address(this), amount);
-        USDC.approve(address(registry), amount);
-        vm.expectRevert(bytes("Bad head"));
-        registry.newOrder(USDC_WETH_05_POOL, 204400, uint96(amount), true, 408423, 408420);
-        (head, tail) = registry.findSpot(USDC_WETH_05_POOL, 0, 204400);
-        assertEq(head, 408421, "Wrong Head.");
-        assertEq(tail, 408423, "Wrong Tail.");
-
-        //                                                               Current Tick: 204332
-        //                                                                       v
-        // NULL <-> (204140 - 204150) <-> (204240 - 204250) <-> (204320 - 204330) <-> (204340 - 204350) <-> (204360 - 204370) <-> (204440 - 204450) <-> (204540 - 204550) <-> NULL
-        //                                                                                                                     ^                     ^
-        //                                                                                                                Correct spot     Incorrect proposed spot
-        // Head check passes, but tail check fails since the proposed tail has higher tick values.
-        amount = 1_000e6;
-        deal(address(USDC), address(this), amount);
-        USDC.approve(address(registry), amount);
-        vm.expectRevert(bytes("Bad tail"));
-        registry.newOrder(USDC_WETH_05_POOL, 204400, uint96(amount), true, 408422, 408421);
-        (head, tail) = registry.findSpot(USDC_WETH_05_POOL, 0, 204400);
-        assertEq(head, 408421, "Wrong Head.");
-        assertEq(tail, 408423, "Wrong Tail.");
-
-        // ---------------------------- Trying to "orphan" nodes in the list ----------------------------
-        //                                                               Current Tick: 204332
-        //                                                                       v
-        // NULL <-> (204140 - 204150) <-> (204240 - 204250) <-> (204320 - 204330) <-> (204340 - 204350) <-> (204360 - 204370) <-> (204440 - 204450) <-> (204540 - 204550) <-> NULL
-        //                  ^                     ^                     ^
-        //           proposed tail       node trying to orphan                proposed head
-        amount = 1e18;
-        deal(address(WETH), address(this), amount);
-        WETH.approve(address(registry), amount);
-        vm.expectRevert(bytes("Skipping nodes."));
-        registry.newOrder(USDC_WETH_05_POOL, 204300, uint96(amount), false, 408424, 408426);
-
-        //                                                                        Current Tick: 204332
-        //                                                                                v
-        //          NULL <-> (204140 - 204150) <-> (204240 - 204250) <-> (204320 - 204330) <-> (204340 - 204350) <-> (204360 - 204370) <-> (204440 - 204450) <-> (204540 - 204550) <-> NULL
-        //            ^              ^                     ^
-        //      proposed tail   node trying to orphan   proposed head
-        amount = 1e18;
-        deal(address(WETH), address(this), amount);
-        WETH.approve(address(registry), amount);
-        vm.expectRevert(bytes("Skipping nodes."));
-        registry.newOrder(USDC_WETH_05_POOL, 204200, uint96(amount), false, 408425, 0);
-
-        //                                                               Current Tick: 204332
-        //                                                                       v
-        // NULL <-> (204140 - 204150) <-> (204240 - 204250) <-> (204320 - 204330) <-> (204340 - 204350) <-> (204360 - 204370) <-> (204440 - 204450) <-> (204540 - 204550) <-> NULL
-        //                                                                                    ^                     ^                     ^
-        //                                                                             proposed tail       node trying to orphan      proposed head
-        amount = 1_000e6;
-        deal(address(USDC), address(this), amount);
-        USDC.approve(address(registry), amount);
-        vm.expectRevert(bytes("Skipping nodes."));
-        registry.newOrder(USDC_WETH_05_POOL, 204400, uint96(amount), true, 408421, 408420);
-
-        //                                                               Current Tick: 204332
-        //                                                                       v
-        // NULL <-> (204140 - 204150) <-> (204240 - 204250) <-> (204320 - 204330) <-> (204340 - 204350) <-> (204360 - 204370) <-> (204440 - 204450) <-> (204540 - 204550) <-> NULL
-        //                                                                                                                                ^                     ^              ^
-        //                                                                                                                  proposed tail       node trying to orphan      proposed head
-        amount = 1_000e6;
-        deal(address(USDC), address(this), amount);
-        USDC.approve(address(registry), amount);
-        vm.expectRevert(bytes("Skipping nodes."));
-        registry.newOrder(USDC_WETH_05_POOL, 204500, uint96(amount), true, 0, 408421);
-
-        // ---------------------------- Trying to propose 0,0 with non empty list ----------------------------
-        amount = 1e18;
-        deal(address(WETH), address(this), amount);
-        WETH.approve(address(registry), amount);
-        vm.expectRevert(bytes("List not empty"));
-        registry.newOrder(USDC_WETH_05_POOL, 204290, uint96(amount), false, 0, 0);
-    }
+    //     //                                                               Current Tick: 204332
+    //     //                                                                       v
+    //     // NULL <-> (204140 - 204150) <-> (204240 - 204250) <-> (204320 - 204330) <-> (204340 - 204350) <-> (204360 - 204370) <-> (204440 - 204450) <-> (204540 - 204550) <-> NULL
 
     function testNewOrderCenterUpdating() external {
         registry.setMinimumAssets(1, USDC);
@@ -572,11 +358,11 @@ contract LimitOrderRegistryTest is Test {
         uint256 amount = 1_000e6;
         deal(address(USDC), address(this), amount);
         USDC.approve(address(registry), amount);
-        registry.newOrder(USDC_WETH_05_POOL, 204550, uint96(amount), true, 0, 0);
+        registry.newOrder(USDC_WETH_05_POOL, 205000, uint96(amount), true, 0);
 
         // New order should have been set to centerHead.
-        (uint256 centerHead, uint256 centerTail, , , , ) = registry.poolToData(USDC_WETH_05_POOL);
-        uint256 expectedHead = 408420;
+        (uint256 centerHead, uint256 centerTail, , , , , ) = registry.poolToData(USDC_WETH_05_POOL);
+        uint256 expectedHead = 614120;
         assertEq(centerHead, expectedHead, "Center head should have been updated.");
         assertEq(centerTail, 0, "Center tail should be zero.");
 
@@ -585,11 +371,11 @@ contract LimitOrderRegistryTest is Test {
         deal(address(WETH), address(this), amount);
         WETH.approve(address(registry), amount);
         uint256 targetHead = expectedHead;
-        registry.newOrder(USDC_WETH_05_POOL, 204120, uint96(amount), false, targetHead, 0);
+        registry.newOrder(USDC_WETH_05_POOL, 204800, uint96(amount), false, 0);
 
         // New order should have been set to centerTail.
-        (centerHead, centerTail, , , , ) = registry.poolToData(USDC_WETH_05_POOL);
-        uint256 expectedTail = 408421;
+        (centerHead, centerTail, , , , , ) = registry.poolToData(USDC_WETH_05_POOL);
+        uint256 expectedTail = 614121;
         assertEq(centerHead, expectedHead, "Center head should not have been updated.");
         assertEq(centerTail, expectedTail, "Center tail should have been updated.");
 
@@ -597,11 +383,11 @@ contract LimitOrderRegistryTest is Test {
         amount = 1_000e6;
         deal(address(USDC), address(this), amount);
         USDC.approve(address(registry), amount);
-        registry.newOrder(USDC_WETH_05_POOL, 204450, uint96(amount), true, centerHead, centerTail);
+        registry.newOrder(USDC_WETH_05_POOL, 204900, uint96(amount), true, 0);
 
         // New order should have been set to centerHead.
-        (centerHead, centerTail, , , , ) = registry.poolToData(USDC_WETH_05_POOL);
-        expectedHead = 408422;
+        (centerHead, centerTail, , , , , ) = registry.poolToData(USDC_WETH_05_POOL);
+        expectedHead = 614122;
         assertEq(centerHead, expectedHead, "Center head should have been updated.");
         assertEq(centerTail, expectedTail, "Center tail should not have been updated.");
 
@@ -610,11 +396,11 @@ contract LimitOrderRegistryTest is Test {
         deal(address(WETH), address(this), amount);
         WETH.approve(address(registry), amount);
         targetHead = expectedHead;
-        registry.newOrder(USDC_WETH_05_POOL, 204220, uint96(amount), false, centerHead, centerTail);
+        registry.newOrder(USDC_WETH_05_POOL, 204850, uint96(amount), false, 0);
 
         // New order should have been set to centerTail.
-        (centerHead, centerTail, , , , ) = registry.poolToData(USDC_WETH_05_POOL);
-        expectedTail = 408423;
+        (centerHead, centerTail, , , , , ) = registry.poolToData(USDC_WETH_05_POOL);
+        expectedTail = 614123;
         assertEq(centerHead, expectedHead, "Center head should not have been updated.");
         assertEq(centerTail, expectedTail, "Center tail should have been updated.");
 
@@ -622,10 +408,10 @@ contract LimitOrderRegistryTest is Test {
         amount = 1_000e6;
         deal(address(USDC), address(this), amount);
         USDC.approve(address(registry), amount);
-        registry.newOrder(USDC_WETH_05_POOL, 204650, uint96(amount), true, 0, 408420);
+        registry.newOrder(USDC_WETH_05_POOL, 204910, uint96(amount), true, 0);
 
         // New order should have been set to centerHead.
-        (centerHead, centerTail, , , , ) = registry.poolToData(USDC_WETH_05_POOL);
+        (centerHead, centerTail, , , , , ) = registry.poolToData(USDC_WETH_05_POOL);
         assertEq(centerHead, expectedHead, "Center head should not have been updated.");
         assertEq(centerTail, expectedTail, "Center tail should not have been updated.");
 
@@ -634,10 +420,10 @@ contract LimitOrderRegistryTest is Test {
         deal(address(WETH), address(this), amount);
         WETH.approve(address(registry), amount);
         targetHead = expectedHead;
-        registry.newOrder(USDC_WETH_05_POOL, 204020, uint96(amount), false, 408421, 0);
+        registry.newOrder(USDC_WETH_05_POOL, 204700, uint96(amount), false, 0);
 
         // New order should have been set to centerTail.
-        (centerHead, centerTail, , , , ) = registry.poolToData(USDC_WETH_05_POOL);
+        (centerHead, centerTail, , , , , ) = registry.poolToData(USDC_WETH_05_POOL);
         assertEq(centerHead, expectedHead, "Center head should not have been updated.");
         assertEq(centerTail, expectedTail, "Center tail should not have been updated.");
     }
@@ -652,14 +438,13 @@ contract LimitOrderRegistryTest is Test {
         uint256 amount = 1_000e6;
         deal(address(USDC), address(this), amount);
         USDC.approve(address(registry), amount);
-        registry.newOrder(USDC_WETH_05_POOL, 204550, uint96(amount), true, 0, 0);
+        registry.newOrder(USDC_WETH_05_POOL, 204910, uint96(amount), true, 0);
 
         // Create orders to sell WETH.
         amount = 1e18;
         deal(address(WETH), address(this), amount);
         WETH.approve(address(registry), amount);
-        uint256 targetHead = 408420;
-        registry.newOrder(USDC_WETH_05_POOL, 204120, uint96(amount), false, targetHead, 0);
+        registry.newOrder(USDC_WETH_05_POOL, 204860, uint96(amount), false, 0);
 
         // Skew pool tick before placing order.
         {
@@ -670,7 +455,7 @@ contract LimitOrderRegistryTest is Test {
             uint24[] memory poolFees = new uint24[](1);
             poolFees[0] = 500;
 
-            uint256 swapAmount = 50_000_000e6;
+            uint256 swapAmount = 1_000_000e6;
             deal(address(USDC), address(this), swapAmount);
             _swap(path, poolFees, swapAmount);
         }
@@ -679,8 +464,8 @@ contract LimitOrderRegistryTest is Test {
         amount = 1_000e6;
         deal(address(USDC), address(this), amount);
         USDC.approve(address(registry), amount);
-        vm.expectRevert(bytes("User can not update center while orders are ITM."));
-        registry.newOrder(USDC_WETH_05_POOL, 204350, uint96(amount), true, targetHead, 408421);
+        vm.expectRevert(abi.encodeWithSelector(LimitOrderRegistry.LimitOrderRegistry__CenterITM.selector));
+        registry.newOrder(USDC_WETH_05_POOL, 204900, uint96(amount), true, 0);
 
         // Skew pool tick before placing order.
         {
@@ -691,7 +476,7 @@ contract LimitOrderRegistryTest is Test {
             uint24[] memory poolFees = new uint24[](1);
             poolFees[0] = 500;
 
-            uint256 swapAmount = 100_000e18;
+            uint256 swapAmount = 900e18;
             deal(address(WETH), address(this), swapAmount);
             _swap(path, poolFees, swapAmount);
         }
@@ -700,8 +485,8 @@ contract LimitOrderRegistryTest is Test {
         amount = 1e18;
         deal(address(WETH), address(this), amount);
         WETH.approve(address(registry), amount);
-        vm.expectRevert(bytes("User can not update center while orders are ITM."));
-        registry.newOrder(USDC_WETH_05_POOL, 204220, uint96(amount), false, 408420, 408421);
+        vm.expectRevert(abi.encodeWithSelector(LimitOrderRegistry.LimitOrderRegistry__CenterITM.selector));
+        registry.newOrder(USDC_WETH_05_POOL, 204870, uint96(amount), false, 0);
     }
 
     // TODO test that cancelling orders properly updates centers.
