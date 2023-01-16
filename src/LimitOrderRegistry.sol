@@ -10,12 +10,15 @@ import { NonfungiblePositionManager as INonfungiblePositionManager } from "src/i
 import { ERC721Holder } from "@openzeppelin/contracts/token/ERC721/utils/ERC721Holder.sol";
 import { LinkTokenInterface } from "@chainlink/contracts/src/v0.8/interfaces/LinkTokenInterface.sol";
 import { IKeeperRegistrar as KeeperRegistrar } from "src/interfaces/chainlink/IKeeperRegistrar.sol";
+import { Context } from "@openzeppelin/contracts/utils/Context.sol";
 
 import { console } from "@forge-std/Test.sol";
 
 // TODO are struct memory variables passed by reference? and if so can they be used to update a structs state using the = sign?
 // ^^^^ YES they are passed by reference, and you can use that memory struct to change the state of a storage struct.
-contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holder {
+// V2 Registry on Polygon 0xE16Df59B887e3Caa439E0b29B42bA2e7976FD8b2
+// V2 Registrar 0x9a811502d843E5a03913d5A2cfb646c11463467A
+contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holder, Context {
     using SafeTransferLib for ERC20;
 
     /*//////////////////////////////////////////////////////////////
@@ -96,7 +99,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                                  ERRORS
     //////////////////////////////////////////////////////////////*/
 
-    error LimitOrderRegistry__NewOrderITM(int24 currentTick, int24 targetTick, bool direction);
+    error LimitOrderRegistry__OrderITM(int24 currentTick, int24 targetTick, bool direction);
     error LimitOrderRegistry__PoolAlreadySetup(address pool);
     error LimitOrderRegistry__PoolNotSetup(address pool);
     error LimitOrderRegistry__InvalidTargetTick(int24 targetTick, int24 tickSpacing);
@@ -123,6 +126,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     /*//////////////////////////////////////////////////////////////
                               IMMUTABLES
     //////////////////////////////////////////////////////////////*/
+
+    // 0xE16Df59B887e3Caa439E0b29B42bA2e7976FD8b2
 
     ERC20 public immutable WRAPPED_NATIVE; // Mainnet 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2
 
@@ -156,11 +161,11 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         // Check if Limit Order is already setup for `pool`.
         if (address(poolToData[pool].token0) != address(0)) revert LimitOrderRegistry__PoolAlreadySetup(address(pool));
 
+        // TODO can use registerUpkeep instead
         // Create Upkeep.
         if (initialUpkeepFunds > 0) {
             // Owner wants to automatically create an upkeep for new pool.
-            SafeTransferLib.safeTransferFrom(ERC20(address(LINK)), msg.sender, address(this), initialUpkeepFunds);
-
+            SafeTransferLib.safeTransferFrom(ERC20(address(LINK)), owner, address(this), initialUpkeepFunds);
             string memory name = "Limit Order Registry";
             uint96 amount = uint96(initialUpkeepFunds);
             bytes memory upkeepCreationData = abi.encodeWithSelector(
@@ -169,7 +174,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                 abi.encode(0),
                 address(this),
                 UPKEEP_GAS_LIMIT,
-                msg.sender,
+                owner,
                 // abi.encode(pool),
                 abi.encode(0),
                 amount,
@@ -209,18 +214,18 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         PoolData storage data = poolToData[pool];
 
         if (data.token0Fees > 0) {
-            data.token0.safeTransfer(msg.sender, data.token0Fees);
+            data.token0.safeTransfer(owner, data.token0Fees);
             data.token0Fees = 0;
         }
         if (data.token1Fees > 0) {
-            data.token1.safeTransfer(msg.sender, data.token1Fees);
+            data.token1.safeTransfer(owner, data.token1Fees);
             data.token1Fees = 0;
         }
     }
 
     function withdrawNative() external onlyOwner {
-        WRAPPED_NATIVE.safeTransfer(msg.sender, WRAPPED_NATIVE.balanceOf(address(this)));
-        payable(msg.sender).transfer(address(this).balance);
+        WRAPPED_NATIVE.safeTransfer(owner, WRAPPED_NATIVE.balanceOf(address(this)));
+        payable(owner).transfer(address(this).balance);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -258,7 +263,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         // Validate lower, upper,and direction.
         {
             OrderStatus status = _getOrderStatus(tick, lower, upper, direction);
-            if (status != OrderStatus.OTM) revert LimitOrderRegistry__NewOrderITM(tick, targetTick, direction);
+            if (status != OrderStatus.OTM) revert LimitOrderRegistry__OrderITM(tick, targetTick, direction);
         }
 
         // Transfer assets into contract before setting any state.
@@ -267,7 +272,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             if (direction) assetIn = poolToData[pool].token0;
             else assetIn = poolToData[pool].token1;
             _enforceMinimumLiquidity(amount, assetIn);
-            assetIn.safeTransferFrom(msg.sender, address(this), amount);
+            assetIn.safeTransferFrom(_msgSender(), address(this), amount);
         }
 
         // Get the position id.
@@ -289,7 +294,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             //  create a new userDataId, direction.
             _setupOrder(direction, positionId);
             // update token0Amount, token1Amount, userData array(checking if user is already in it).
-            userTotal = _updateOrder(positionId, msg.sender, amount);
+            userTotal = _updateOrder(positionId, _msgSender(), amount);
 
             _updateCenter(pool, positionId, tick, upper, lower);
 
@@ -304,7 +309,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                 PoolData memory data = poolToData[pool];
                 _addToPosition(data, positionId, amount0, amount1, direction);
                 // update token0Amount, token1Amount, userData array(checking if user is already in it).
-                userTotal = _updateOrder(positionId, msg.sender, amount);
+                userTotal = _updateOrder(positionId, _msgSender(), amount);
             } else {
                 // We already have this order.
                 PoolData memory data = poolToData[pool];
@@ -317,14 +322,13 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                 // Need to add liquidity,
                 _addToPosition(data, positionId, amount0, amount1, direction);
                 // update token0Amount, token1Amount, userData array(checking if user is already in it).
-                userTotal = _updateOrder(positionId, msg.sender, amount);
+                userTotal = _updateOrder(positionId, _msgSender(), amount);
 
                 _updateCenter(pool, positionId, tick, upper, lower);
             }
         }
         uint256 userDataId = orderLinkedList[positionId].userDataId;
-        emit NewOrder(msg.sender, userDataId, address(pool), amount, userTotal);
-        // emit UserGroup(msg.sender, orderLinkedList[positionId].userDataId);
+        emit NewOrder(_msgSender(), userDataId, address(pool), amount, userTotal);
     }
 
     function claimOrder(
@@ -336,12 +340,13 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         uint256 userLength = userData[userDataId].length;
 
         // Transfer fee in.
+        address sender = _msgSender();
         if (msg.value >= userClaim.feePerUser) {
             // refund if necessary.
             uint256 refund = msg.value - userClaim.feePerUser;
-            if (refund > 0) payable(msg.sender).transfer(refund);
+            if (refund > 0) payable(sender).transfer(refund);
         } else {
-            WRAPPED_NATIVE.safeTransferFrom(msg.sender, address(this), userClaim.feePerUser);
+            WRAPPED_NATIVE.safeTransferFrom(sender, address(this), userClaim.feePerUser);
         }
 
         for (uint256 i; i < userLength; ++i) {
@@ -387,45 +392,50 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         int24 targetTick,
         bool direction
     ) external returns (uint128 amount0, uint128 amount1) {
-        // Make sure order is OTM.
-        (, int24 tick, , , , , ) = pool.slot0();
-
-        // Determine upper and lower ticks.
-        int24 upper;
-        int24 lower;
+        uint256 positionId;
         {
-            int24 tickSpacing = pool.tickSpacing();
-            // TODO is it safe to assume tickSpacing is always positive?
-            // Make sure targetTick is divisible by spacing.
-            if (targetTick % tickSpacing != 0) revert LimitOrderRegistry__InvalidTargetTick(targetTick, tickSpacing);
-            if (direction) {
-                upper = targetTick;
-                lower = targetTick - tickSpacing;
-            } else {
-                upper = targetTick + tickSpacing;
-                lower = targetTick;
+            // Make sure order is OTM.
+            (, int24 tick, , , , , ) = pool.slot0();
+
+            // Determine upper and lower ticks.
+            int24 upper;
+            int24 lower;
+            {
+                int24 tickSpacing = pool.tickSpacing();
+                // TODO is it safe to assume tickSpacing is always positive?
+                // Make sure targetTick is divisible by spacing.
+                if (targetTick % tickSpacing != 0)
+                    revert LimitOrderRegistry__InvalidTargetTick(targetTick, tickSpacing);
+                if (direction) {
+                    upper = targetTick;
+                    lower = targetTick - tickSpacing;
+                } else {
+                    upper = targetTick + tickSpacing;
+                    lower = targetTick;
+                }
             }
-        }
-        // Validate lower, upper,and direction.
-        {
-            OrderStatus status = _getOrderStatus(tick, lower, upper, direction);
-            if (status != OrderStatus.OTM) revert LimitOrderRegistry__NewOrderITM(tick, targetTick, direction);
-        }
+            // Validate lower, upper,and direction.
+            {
+                OrderStatus status = _getOrderStatus(tick, lower, upper, direction);
+                if (status != OrderStatus.OTM) revert LimitOrderRegistry__OrderITM(tick, targetTick, direction);
+            }
 
-        // Get the position id.
-        uint256 positionId = getPositionFromTicks[lower][upper];
+            // Get the position id.
+            positionId = getPositionFromTicks[lower][upper];
 
-        if (positionId == 0) revert LimitOrderRegistry__InvalidPositionId();
+            if (positionId == 0) revert LimitOrderRegistry__InvalidPositionId();
+        }
 
         uint256 liquidityPercentToTake;
 
         // Get the users deposit amount in the order.
         Order storage order = orderLinkedList[positionId];
+        address sender = _msgSender();
         {
             uint256 userDataId = order.userDataId;
             uint256 userLength = userData[userDataId].length;
             for (uint256 i; i < userLength; ++i) {
-                if (userData[userDataId][i].user == msg.sender) {
+                if (userData[userDataId][i].user == sender) {
                     // Found our user.
                     uint96 depositAmount = userData[userDataId][i].depositAmount;
                     if (order.direction) {
@@ -448,7 +458,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                     userData[userDataId].pop();
                     break;
                 } else if (i == userLength - 1) {
-                    revert LimitOrderRegistry__UserNotFound(msg.sender, userDataId);
+                    revert LimitOrderRegistry__UserNotFound(sender, userDataId);
                 }
             }
 
@@ -461,12 +471,12 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             }
         }
         if (order.direction) {
-            if (amount0 > 0) poolToData[pool].token0.safeTransfer(msg.sender, amount0);
+            if (amount0 > 0) poolToData[pool].token0.safeTransfer(sender, amount0);
             else revert LimitOrderRegistry__NoLiquidityInOrder();
             // Save any swap fees.
             if (amount1 > 0) poolToData[pool].token1Fees += amount1;
         } else {
-            if (amount1 > 0) poolToData[pool].token1.safeTransfer(msg.sender, amount1);
+            if (amount1 > 0) poolToData[pool].token1.safeTransfer(sender, amount1);
             else revert LimitOrderRegistry__NoLiquidityInOrder();
             // Save any swap fees.
             if (amount0 > 0) poolToData[pool].token0Fees += amount0;
@@ -804,6 +814,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         // Zero token id is reserved for NULL values in linked list.
         if (tokenId == 0) revert LimitOrderRegistry__InvalidPositionId();
 
+        // TODO confirm that full aproval is used, and if not the zero it out.
+
         return tokenId;
     }
 
@@ -833,6 +845,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
 
         // Increase liquidity in pool.
         positionManager.increaseLiquidity(params);
+        // TODO confirm that full aproval is used, and if not the zero it out.
         // TODO so it looks like uni will round down by 10 wei or so sometimes, is that worth refunding the user? Probs not they'd spend more on the extra gas.
     }
 
@@ -1015,10 +1028,22 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         int24 targetTick
     ) external view returns (uint256 proposedHead, uint256 proposedTail) {
         PoolData memory data = poolToData[pool];
+
+        int24 tickSpacing = pool.tickSpacing();
+        // Make sure targetTick is divisible by spacing.
+        if (targetTick % tickSpacing != 0) revert LimitOrderRegistry__InvalidTargetTick(targetTick, tickSpacing);
+
         (proposedHead, proposedTail) = _findSpot(data, startingNode, targetTick);
     }
 
     function getFeePerUser(uint256 userDataId) external view returns (uint128) {
         return claim[userDataId].feePerUser;
+    }
+
+    // TODO view function that takes a target tick, and tries to find the node closest to it.
+    function findNode(IUniswapV3Pool pool, int24 targetTick) external view returns (uint256 closestNode) {
+        int24 tickSpacing = pool.tickSpacing();
+        // Make sure targetTick is divisible by spacing.
+        if (targetTick % tickSpacing != 0) revert LimitOrderRegistry__InvalidTargetTick(targetTick, tickSpacing);
     }
 }

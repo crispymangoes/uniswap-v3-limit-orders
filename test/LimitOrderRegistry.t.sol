@@ -345,8 +345,8 @@ contract LimitOrderRegistryTest is Test {
         registry.cancelOrder(USDC_WETH_05_POOL, 204900, true);
     }
 
-    //     //                                                               Current Tick: 204332
-    //     //                                                                       v
+    //     //                     Current Tick: 204162
+    //     //                             v
     //     // NULL <-> (204140 - 204150) <-> (204240 - 204250) <-> (204320 - 204330) <-> (204340 - 204350) <-> (204360 - 204370) <-> (204440 - 204450) <-> (204540 - 204550) <-> NULL
 
     function testNewOrderCenterUpdating() external {
