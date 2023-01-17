@@ -81,9 +81,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
 
     mapping(uint256 => UserData[]) private userData;
 
-    uint24 public constant BUFFER = 10; // The number of ticks past the endTick needed for checkUpkeep to trigger an upkeep.
-    // The minimum spacing between new order ticks is this mulitplier times the pools min tick spacing, this way users can better
-
     // Orders can be reused to save on NFT space
     // PositionId to Order
     mapping(uint256 => Order) public orderLinkedList;
@@ -249,7 +246,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         int24 lower;
         {
             int24 tickSpacing = pool.tickSpacing();
-            // TODO is it safe to assume tickSpacing is always positive?
             // Make sure targetTick is divisible by spacing.
             if (targetTick % tickSpacing != 0) revert LimitOrderRegistry__InvalidTargetTick(targetTick, tickSpacing);
             if (direction) {
@@ -402,7 +398,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             int24 lower;
             {
                 int24 tickSpacing = pool.tickSpacing();
-                // TODO is it safe to assume tickSpacing is always positive?
                 // Make sure targetTick is divisible by spacing.
                 if (targetTick % tickSpacing != 0)
                     revert LimitOrderRegistry__InvalidTargetTick(targetTick, tickSpacing);
@@ -438,15 +433,28 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                 if (userData[userDataId][i].user == sender) {
                     // Found our user.
                     uint96 depositAmount = userData[userDataId][i].depositAmount;
+                    uint128 orderAmount;
                     if (order.direction) {
-                        if (order.token0Amount == depositAmount) liquidityPercentToTake = 1e18;
-                        else {
-                            liquidityPercentToTake = (1e18 * depositAmount) / order.token0Amount;
+                        orderAmount = order.token0Amount;
+                        if (orderAmount == depositAmount) {
+                            liquidityPercentToTake = 1e18;
+                            // Update order tokenAmount.
+                            order.token0Amount = 0;
+                        } else {
+                            liquidityPercentToTake = (1e18 * depositAmount) / orderAmount;
+                            // Update order tokenAmount.
+                            order.token0Amount = orderAmount - depositAmount;
                         }
                     } else {
-                        if (order.token1Amount == depositAmount) liquidityPercentToTake = 1e18;
-                        else {
-                            liquidityPercentToTake = (1e18 * depositAmount) / order.token1Amount;
+                        orderAmount = order.token1Amount;
+                        if (orderAmount == depositAmount) {
+                            liquidityPercentToTake = 1e18;
+                            // Update order tokenAmount.
+                            order.token1Amount = 0;
+                        } else {
+                            liquidityPercentToTake = (1e18 * depositAmount) / orderAmount;
+                            // Update order tokenAmount.
+                            order.token1Amount = orderAmount - depositAmount;
                         }
                     }
 
@@ -461,7 +469,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                     revert LimitOrderRegistry__UserNotFound(sender, userDataId);
                 }
             }
-
             (amount0, amount1) = _takeFromPosition(positionId, pool, liquidityPercentToTake);
             if (liquidityPercentToTake == 1e18) {
                 _removeOrderFromList(positionId, pool, order);
