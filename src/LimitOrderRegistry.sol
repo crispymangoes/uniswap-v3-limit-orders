@@ -40,9 +40,9 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         bool direction; //Determines what direction we are going
         int24 tickUpper;
         int24 tickLower;
+        uint128 userDataId; // The id where the user data is currently stored
         uint128 token0Amount; //Can either be the deposit amount or the amount got out of liquidity changing to the other token
         uint128 token1Amount; //uint128 is already a restriction in base uniswap V3 protocol.
-        uint256 userDataId; // The id where the user data is currently stored
         uint256 head;
         uint256 tail;
     }
@@ -64,8 +64,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                              GLOBAL STATE
     //////////////////////////////////////////////////////////////*/
 
-    // How users claim their tokens, just need to pass in the uint128 userDataId
-    mapping(uint256 => Claim) public claim;
+    // How users claim their tokens, just need to pass in the uint120 userDataId
+    mapping(uint128 => Claim) public claim;
 
     mapping(UniswapV3Pool => PoolData) public poolToData;
 
@@ -73,11 +73,12 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
 
     // Simplest approach is to have an owner set value for minimum liquidity
     mapping(ERC20 => uint256) public minimumAssets;
-    uint256 public upkeepGasLimit = 100_000;
-    uint256 public upkeepGasPrice = 100_000;
+    uint32 public upkeepGasLimit = 300_000;
+    uint32 public upkeepGasPrice = 30;
+    uint16 public maxFillsPerUpkeep = 10;
 
     // Zero is reserved
-    uint256 public userDataCount = 1;
+    uint128 public userDataCount = 1;
 
     mapping(uint256 => UserData[]) private userData;
 
@@ -151,9 +152,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                               OWNER LOGIC
     //////////////////////////////////////////////////////////////*/
 
-    uint32 public maxFillsPerUpkeep = 10;
-
-    function setMaxFillsPerUpkeep(uint32 newVal) external onlyOwner {
+    function setMaxFillsPerUpkeep(uint16 newVal) external onlyOwner {
         maxFillsPerUpkeep = newVal;
     }
 
@@ -202,11 +201,12 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     }
 
     /// @dev premium should be factored into this value.
-    function setUpkeepGasLimit(uint256 gasLimit) external onlyOwner {
+    function setUpkeepGasLimit(uint32 gasLimit) external onlyOwner {
         upkeepGasLimit = gasLimit;
     }
 
-    function setUpkeepGasPrice(uint256 gasPrice) external onlyOwner {
+    // In units of gwei.
+    function setUpkeepGasPrice(uint32 gasPrice) external onlyOwner {
         upkeepGasPrice = gasPrice;
     }
 
@@ -332,7 +332,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
 
     function claimOrder(
         UniswapV3Pool pool,
-        uint256 userDataId,
+        uint128 userDataId,
         address user
     ) external payable returns (uint256) {
         Claim storage userClaim = claim[userDataId];
@@ -496,9 +496,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                      CHAINLINK AUTOMATION LOGIC
     //////////////////////////////////////////////////////////////*/
 
-    // So this function just returns a target uint256, and a direction bool
-    // Where the target is the new closest order to being ITM, but that is not ITM.
-    // Weird thing is that this target order can be MIXED or OTM. But as long as it is not ITM, it should be set as the new tail or head center, depending on direction!
     function checkUpkeep(bytes calldata checkData) external view returns (bool upkeepNeeded, bytes memory performData) {
         UniswapV3Pool pool = abi.decode(checkData, (UniswapV3Pool));
         (, int24 currentTick, , , , , ) = pool.slot0();
@@ -533,9 +530,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         return (false, abi.encode(0));
     }
 
-    // Maybe for better input sanitation, this should only accept a single node, the last node to fulfill in the order.
-    // So then how do we enforce the max fulfillments per upkeep? I mean we could just keep a count.
-    // Then the keeper can just keep sending the TX with the same input data until it is done processing them.
     function performUpkeep(bytes calldata performData) external {
         (UniswapV3Pool pool, bool walkDirection) = abi.decode(performData, (UniswapV3Pool, bool));
 
@@ -544,7 +538,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         PoolData storage data = poolToData[pool];
 
         // Estimate gas cost.
-        uint256 estimatedFee = upkeepGasLimit * upkeepGasPrice;
+        uint256 estimatedFee = uint256(upkeepGasLimit * upkeepGasPrice) * 1e9; // Multiply by 1e9 to convert gas price to gwei
 
         (, int24 currentTick, , , , , ) = pool.slot0();
         bool orderFilled;
@@ -1044,7 +1038,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         (proposedHead, proposedTail) = _findSpot(data, startingNode, targetTick);
     }
 
-    function getFeePerUser(uint256 userDataId) external view returns (uint128) {
+    function getFeePerUser(uint128 userDataId) external view returns (uint128) {
         return claim[userDataId].feePerUser;
     }
 

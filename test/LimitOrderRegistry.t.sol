@@ -11,6 +11,7 @@ import { IKeeperRegistrar as KeeperRegistrar } from "src/interfaces/chainlink/IK
 
 import { Test, console } from "@forge-std/Test.sol";
 
+// TODO tests failed after changing gas price numbers.
 contract LimitOrderRegistryTest is Test {
     LimitOrderRegistry public registry;
 
@@ -96,8 +97,8 @@ contract LimitOrderRegistryTest is Test {
         registry.performUpkeep(performData);
 
         deal(address(USDC), address(this), 0);
-        deal(address(WMATIC), address(this), 100_000 * 100_000);
-        WMATIC.approve(address(registry), 100_000 * 100_000);
+        deal(address(WMATIC), address(this), 300_000 * 30e9);
+        WMATIC.approve(address(registry), 300_000 * 30e9);
         registry.claimOrder(USDC_WETH_05_POOL, 1, address(this));
 
         // Now create an order to sell WETH.
@@ -130,8 +131,8 @@ contract LimitOrderRegistryTest is Test {
         registry.performUpkeep(performData);
 
         deal(address(USDC), address(this), 0);
-        deal(address(WMATIC), address(this), 100_000 * 100_000);
-        WMATIC.approve(address(registry), 100_000 * 100_000);
+        deal(address(WMATIC), address(this), 300_000 * 30e9);
+        WMATIC.approve(address(registry), 300_000 * 30e9);
         registry.claimOrder(USDC_WETH_05_POOL, 2, address(this));
     }
 
@@ -266,7 +267,7 @@ contract LimitOrderRegistryTest is Test {
         // }
 
         // Claim everything.
-        deal(address(WMATIC), address(this), 1e18);
+        deal(address(WMATIC), address(this), 100e18);
         WMATIC.approve(address(registry), type(uint256).max);
         registry.claimOrder(USDC_WETH_05_POOL, 1, address(this));
         registry.claimOrder(USDC_WETH_05_POOL, 2, address(this));
@@ -315,7 +316,7 @@ contract LimitOrderRegistryTest is Test {
         registry.performUpkeep(performData);
 
         // Have both users claim their orders.
-        uint256 expectedFeePerUser = 10e9 / 2;
+        uint256 expectedFeePerUser = (300_000 * 30 * 1e9) / 2;
         vm.startPrank(userA);
         deal(address(WMATIC), userA, expectedFeePerUser);
         WMATIC.approve(address(registry), expectedFeePerUser);
