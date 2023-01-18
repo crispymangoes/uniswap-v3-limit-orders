@@ -260,6 +260,11 @@ contract LimitOrderRegistryTest is Test {
 
         registry.performUpkeep(performData);
 
+        // (uint256[10] memory heads, uint256[10] memory tails) = registry.viewList(USDC_WETH_05_POOL);
+        // for (uint256 i; i < 10; i++) {
+        //     console.log(i, heads[i], tails[i]);
+        // }
+
         // Claim everything.
         deal(address(WMATIC), address(this), 1e18);
         WMATIC.approve(address(registry), type(uint256).max);
@@ -595,13 +600,342 @@ contract LimitOrderRegistryTest is Test {
         registry.newOrder(USDC_WETH_05_POOL, poolTick, uint96(amount), false, 0);
     }
 
-    function testCancellingITMOrder() external {}
+    function testCancellingITMOrder() external {
+        uint96 usdcAmount = 1_000e6;
+        uint96 wethAmount = 1e18;
 
-    function testOrderCreationWrongDirection() external {}
+        int24 poolTick;
+        {
+            (, int24 tick, , , , , ) = USDC_WETH_05_POOL.slot0();
+            poolTick = tick - (tick % USDC_WETH_05_POOL.tickSpacing());
+        }
+
+        // Create orders.
+        _createOrder(address(this), USDC_WETH_05_POOL, 20, USDC, usdcAmount);
+        _createOrder(address(this), USDC_WETH_05_POOL, -20, WETH, wethAmount);
+
+        // Make first order ITM.
+        {
+            address[] memory path = new address[](2);
+            path[0] = address(WETH);
+            path[1] = address(USDC);
+
+            uint24[] memory poolFees = new uint24[](1);
+            poolFees[0] = 500;
+
+            uint256 swapAmount = 770e18;
+            deal(address(WETH), address(this), swapAmount);
+            _swap(path, poolFees, swapAmount);
+        }
+
+        (, int24 currentTick, , , , , ) = USDC_WETH_05_POOL.slot0();
+
+        // Try to cancel it.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LimitOrderRegistry.LimitOrderRegistry__OrderITM.selector,
+                currentTick,
+                poolTick + 20,
+                true
+            )
+        );
+        registry.cancelOrder(USDC_WETH_05_POOL, poolTick + 20, true);
+
+        // Make second order ITM.
+        {
+            address[] memory path = new address[](2);
+            path[0] = address(USDC);
+            path[1] = address(WETH);
+
+            uint24[] memory poolFees = new uint24[](1);
+            poolFees[0] = 500;
+
+            uint256 swapAmount = 2_000_000e6;
+            deal(address(USDC), address(this), swapAmount);
+            _swap(path, poolFees, swapAmount);
+        }
+        (, currentTick, , , , , ) = USDC_WETH_05_POOL.slot0();
+
+        // Try to cancel it.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LimitOrderRegistry.LimitOrderRegistry__OrderITM.selector,
+                currentTick,
+                poolTick - 20,
+                false
+            )
+        );
+        registry.cancelOrder(USDC_WETH_05_POOL, poolTick - 20, false);
+    }
+
+    function testOrderCreationWrongDirection() external {
+        (, int24 currentTick, , , , , ) = USDC_WETH_05_POOL.slot0();
+
+        // Create orders to buy WETH.
+        uint256 amount = 1_000e6;
+        deal(address(USDC), address(this), amount);
+        USDC.approve(address(registry), amount);
+        vm.expectRevert(
+            abi.encodeWithSelector(LimitOrderRegistry.LimitOrderRegistry__OrderITM.selector, currentTick, 204910, false)
+        );
+        registry.newOrder(USDC_WETH_05_POOL, 204910, uint96(amount), false, 0);
+
+        // Create orders to sell WETH.
+        amount = 1e18;
+        deal(address(WETH), address(this), amount);
+        WETH.approve(address(registry), amount);
+        vm.expectRevert(
+            abi.encodeWithSelector(LimitOrderRegistry.LimitOrderRegistry__OrderITM.selector, currentTick, 204860, true)
+        );
+        registry.newOrder(USDC_WETH_05_POOL, 204860, uint96(amount), true, 0);
+    }
+
+    function testUpkeepFulfillingOrders() external {
+        (, int24 currentTick, , , , , ) = USDC_WETH_05_POOL.slot0();
+        // console.log("Pool Tick", uint24(currentTick));
+        uint96 usdcAmount = 1_000e6;
+        uint96 wethAmount = 1e18;
+
+        uint256[10] memory expectedHeads = [id0, id1, id2, 0, 0, 0, 0, 0, 0, 0];
+        uint256[10] memory expectedTails = [id3, id4, id5, 0, 0, 0, 0, 0, 0, 0];
+
+        address userA = vm.addr(10);
+        address userB = vm.addr(20);
+
+        // Fill List with orders.
+        vm.startPrank(userA);
+        // User A places a repeat order.
+        _createOrder(userA, USDC_WETH_05_POOL, 20, USDC, usdcAmount);
+        _createOrder(userA, USDC_WETH_05_POOL, 20, USDC, usdcAmount);
+        _createOrder(userA, USDC_WETH_05_POOL, 40, USDC, usdcAmount);
+        _createOrder(userA, USDC_WETH_05_POOL, 80, USDC, usdcAmount);
+        vm.stopPrank();
+
+        vm.startPrank(userB);
+        // User B joins User A's order.
+        _createOrder(userB, USDC_WETH_05_POOL, 40, USDC, usdcAmount);
+        _createOrder(userB, USDC_WETH_05_POOL, -20, WETH, wethAmount);
+        _createOrder(userB, USDC_WETH_05_POOL, -40, WETH, wethAmount);
+        _createOrder(userB, USDC_WETH_05_POOL, -80, WETH, wethAmount);
+        vm.stopPrank();
+
+        // Move price so that orders towards head are fulfillable.
+        {
+            address[] memory path = new address[](2);
+            path[0] = address(WETH);
+            path[1] = address(USDC);
+
+            uint24[] memory poolFees = new uint24[](1);
+            poolFees[0] = 500;
+
+            uint256 swapAmount = 770e18;
+            deal(address(WETH), address(this), swapAmount);
+            _swap(path, poolFees, swapAmount);
+        }
+
+        (bool upkeepNeeded, bytes memory performData) = registry.checkUpkeep(abi.encode(USDC_WETH_05_POOL));
+
+        (IUniswapV3Pool pool, bool direction) = abi.decode(performData, (IUniswapV3Pool, bool));
+
+        assertTrue(upkeepNeeded, "Upkeep should be needed.");
+        assertTrue(direction, "Direction should be true.");
+
+        // Changing performData to illogical direction should revert.
+        vm.expectRevert(abi.encodeWithSelector(LimitOrderRegistry.LimitOrderRegistry__NoOrdersToFulfill.selector));
+        registry.performUpkeep(abi.encode(pool, false));
+
+        // Using the correct perfomData works.
+        registry.performUpkeep(performData);
+
+        expectedHeads[0] = 0;
+        expectedHeads[1] = 0;
+        expectedHeads[2] = 0;
+        _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
+
+        // Move price to make some orders ITM.
+        {
+            address[] memory path = new address[](2);
+            path[0] = address(USDC);
+            path[1] = address(WETH);
+
+            uint24[] memory poolFees = new uint24[](1);
+            poolFees[0] = 500;
+
+            uint256 swapAmount = 2_000_000e6;
+            deal(address(USDC), address(this), swapAmount);
+            _swap(path, poolFees, swapAmount);
+        }
+
+        (upkeepNeeded, performData) = registry.checkUpkeep(abi.encode(USDC_WETH_05_POOL));
+
+        (pool, direction) = abi.decode(performData, (IUniswapV3Pool, bool));
+
+        assertTrue(upkeepNeeded, "Upkeep should be needed.");
+        assertTrue(!direction, "Direction should be false.");
+
+        // Changing performData to illogical direction should revert.
+        vm.expectRevert(abi.encodeWithSelector(LimitOrderRegistry.LimitOrderRegistry__NoOrdersToFulfill.selector));
+        registry.performUpkeep(abi.encode(pool, true));
+
+        // Using the correct perfomData works.
+        registry.performUpkeep(performData);
+
+        expectedTails[0] = 0;
+        expectedTails[1] = 0;
+        expectedTails[2] = 0;
+        _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
+    }
 
     function testUpkeepFulfillingSomeOrders() external {
-        // TODO test where upkeep only fulfills some of the orders like if orders 1,2,3,4,5 are ready, if it only fills 2,4, are 1,3,5 still in the proper linked list order
+        // So there are 3 ways a keeper can fulfill orders.
+        // Fulfill 1 order
+        // Fulfill some of the orders in the list(can be done wither by limiting the fulfills per upkeep, or by only moving price some of the way.)
+        // Fulfill all the orders(in the desired direction)
+
+        uint256[10] memory expectedHeads = [id0, id1, id2, id3, id4, id5, 0, 0, 0, 0];
+        uint256[10] memory expectedTails = [id6, id7, id8, id9, id10, id11, 0, 0, 0, 0];
+
+        bool upkeepNeeded;
+        bytes memory performData;
+
+        uint96 usdcAmount = 1_000e6;
+        uint96 wethAmount = 1e18;
+
+        // Fill list with orders.
+        _createOrder(address(this), USDC_WETH_05_POOL, 20, USDC, usdcAmount);
+        _createOrder(address(this), USDC_WETH_05_POOL, 30, USDC, usdcAmount);
+        _createOrder(address(this), USDC_WETH_05_POOL, 40, USDC, usdcAmount);
+        _createOrder(address(this), USDC_WETH_05_POOL, 50, USDC, usdcAmount);
+        _createOrder(address(this), USDC_WETH_05_POOL, 60, USDC, usdcAmount);
+        _createOrder(address(this), USDC_WETH_05_POOL, 70, USDC, usdcAmount);
+
+        _createOrder(address(this), USDC_WETH_05_POOL, -20, WETH, wethAmount);
+        _createOrder(address(this), USDC_WETH_05_POOL, -30, WETH, wethAmount);
+        _createOrder(address(this), USDC_WETH_05_POOL, -40, WETH, wethAmount);
+        _createOrder(address(this), USDC_WETH_05_POOL, -50, WETH, wethAmount);
+        _createOrder(address(this), USDC_WETH_05_POOL, -60, WETH, wethAmount);
+        _createOrder(address(this), USDC_WETH_05_POOL, -70, WETH, wethAmount);
+
+        // Move price so all head orders can be filled.
+        {
+            address[] memory path = new address[](2);
+            path[0] = address(WETH);
+            path[1] = address(USDC);
+
+            uint24[] memory poolFees = new uint24[](1);
+            poolFees[0] = 500;
+
+            uint256 swapAmount = 770e18;
+            deal(address(WETH), address(this), swapAmount);
+            _swap(path, poolFees, swapAmount);
+        }
+
+        // Set max fills to 1.
+        registry.setMaxFillsPerUpkeep(1);
+
+        (upkeepNeeded, performData) = registry.checkUpkeep(abi.encode(USDC_WETH_05_POOL));
+
+        registry.performUpkeep(performData);
+
+        expectedHeads[0] = id1;
+        expectedHeads[1] = id2;
+        expectedHeads[2] = id3;
+        expectedHeads[3] = id4;
+        expectedHeads[4] = id5;
+        expectedHeads[5] = 0;
+
+        // Only first head should have been filled
+        _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
+
+        // Set max fills to 2.
+        registry.setMaxFillsPerUpkeep(2);
+
+        (upkeepNeeded, performData) = registry.checkUpkeep(abi.encode(USDC_WETH_05_POOL));
+
+        registry.performUpkeep(performData);
+
+        expectedHeads[0] = id3;
+        expectedHeads[1] = id4;
+        expectedHeads[2] = id5;
+        expectedHeads[3] = 0;
+        expectedHeads[4] = 0;
+        // Only first 2 heads should have been filled
+        _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
+
+        // Set max fills to 10.
+        registry.setMaxFillsPerUpkeep(10);
+
+        (upkeepNeeded, performData) = registry.checkUpkeep(abi.encode(USDC_WETH_05_POOL));
+
+        registry.performUpkeep(performData);
+
+        expectedHeads[0] = 0;
+        expectedHeads[1] = 0;
+        expectedHeads[2] = 0;
+        // All remaining head orders should be filled.
+        _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
+
+        // Move price so all tails orders can be filled.
+        {
+            address[] memory path = new address[](2);
+            path[0] = address(USDC);
+            path[1] = address(WETH);
+
+            uint24[] memory poolFees = new uint24[](1);
+            poolFees[0] = 500;
+
+            uint256 swapAmount = 2_000_000e6;
+            deal(address(USDC), address(this), swapAmount);
+            _swap(path, poolFees, swapAmount);
+        }
+
+        // Set max fills to 1.
+        registry.setMaxFillsPerUpkeep(1);
+
+        (upkeepNeeded, performData) = registry.checkUpkeep(abi.encode(USDC_WETH_05_POOL));
+
+        registry.performUpkeep(performData);
+
+        expectedTails[0] = id7;
+        expectedTails[1] = id8;
+        expectedTails[2] = id9;
+        expectedTails[3] = id10;
+        expectedTails[4] = id11;
+        expectedTails[5] = 0;
+
+        // Only first head should have been filled
+        _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
+
+        // Set max fills to 2.
+        registry.setMaxFillsPerUpkeep(2);
+
+        (upkeepNeeded, performData) = registry.checkUpkeep(abi.encode(USDC_WETH_05_POOL));
+
+        registry.performUpkeep(performData);
+
+        expectedTails[0] = id9;
+        expectedTails[1] = id10;
+        expectedTails[2] = id11;
+        expectedTails[3] = 0;
+        expectedTails[4] = 0;
+        // Only first 2 heads should have been filled
+        _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
+
+        // Set max fills to 10.
+        registry.setMaxFillsPerUpkeep(10);
+
+        (upkeepNeeded, performData) = registry.checkUpkeep(abi.encode(USDC_WETH_05_POOL));
+
+        registry.performUpkeep(performData);
+
+        expectedTails[0] = 0;
+        expectedTails[1] = 0;
+        expectedTails[2] = 0;
+        // All remaining head orders should be filled.
+        _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
     }
+
+    // TODO integration test where we reuse orders.
 
     function _checkList(
         IUniswapV3Pool pool,
@@ -612,11 +946,13 @@ contract LimitOrderRegistryTest is Test {
 
         // Check heads.
         for (uint256 i; i < 10; ++i) {
+            // console.log(heads[i], expectedHeads[i]);
             assertEq(heads[i], expectedHeads[i], "`head` should equal `expectedHead`.");
         }
 
         // Check tails.
         for (uint256 i; i < 10; ++i) {
+            // console.log(tails[i], expectedTails[i]);
             assertEq(tails[i], expectedTails[i], "`tails` should equal `expectedTail`.");
         }
     }

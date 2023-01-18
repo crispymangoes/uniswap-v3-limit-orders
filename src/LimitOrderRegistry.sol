@@ -5,11 +5,11 @@ import { ERC20 } from "@solmate/tokens/ERC20.sol";
 import { SafeTransferLib } from "@solmate/utils/SafeTransferLib.sol";
 import { AutomationCompatibleInterface } from "@chainlink/contracts/src/v0.8/interfaces/AutomationCompatibleInterface.sol";
 import { Owned } from "@solmate/auth/Owned.sol";
-import { UniswapV3Pool as IUniswapV3Pool } from "src/interfaces/uniswapV3/UniswapV3Pool.sol";
-import { NonfungiblePositionManager as INonfungiblePositionManager } from "src/interfaces/uniswapV3/NonfungiblePositionManager.sol";
+import { UniswapV3Pool } from "src/interfaces/uniswapV3/UniswapV3Pool.sol";
+import { NonfungiblePositionManager } from "src/interfaces/uniswapV3/NonfungiblePositionManager.sol";
 import { ERC721Holder } from "@openzeppelin/contracts/token/ERC721/utils/ERC721Holder.sol";
 import { LinkTokenInterface } from "@chainlink/contracts/src/v0.8/interfaces/LinkTokenInterface.sol";
-import { IKeeperRegistrar as KeeperRegistrar } from "src/interfaces/chainlink/IKeeperRegistrar.sol";
+import { IKeeperRegistrar } from "src/interfaces/chainlink/IKeeperRegistrar.sol";
 import { Context } from "@openzeppelin/contracts/utils/Context.sol";
 
 import { console } from "@forge-std/Test.sol";
@@ -67,7 +67,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     // How users claim their tokens, just need to pass in the uint128 userDataId
     mapping(uint256 => Claim) public claim;
 
-    mapping(IUniswapV3Pool => PoolData) public poolToData;
+    mapping(UniswapV3Pool => PoolData) public poolToData;
 
     mapping(int24 => mapping(int24 => uint256)) public getPositionFromTicks; // maps lower -> upper -> positionId
 
@@ -128,18 +128,18 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
 
     ERC20 public immutable WRAPPED_NATIVE; // Mainnet 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2
 
-    INonfungiblePositionManager public immutable positionManager; // Mainnet 0xC36442b4a4522E871399CD717aBDD847Ab11FE88
+    NonfungiblePositionManager public immutable positionManager; // Mainnet 0xC36442b4a4522E871399CD717aBDD847Ab11FE88
 
     LinkTokenInterface public immutable LINK; // Mainnet 0x514910771AF9Ca656af840dff83E8264EcF986CA
 
-    KeeperRegistrar public immutable REGISTRAR; // Mainnet 0xDb8e8e2ccb5C033938736aa89Fe4fa1eDfD15a1d
+    IKeeperRegistrar public immutable REGISTRAR; // Mainnet 0xDb8e8e2ccb5C033938736aa89Fe4fa1eDfD15a1d
 
     constructor(
         address _owner,
-        INonfungiblePositionManager _positionManager,
+        NonfungiblePositionManager _positionManager,
         ERC20 wrappedNative,
         LinkTokenInterface link,
-        KeeperRegistrar registrar
+        IKeeperRegistrar registrar
     ) Owned(_owner) {
         positionManager = _positionManager;
         WRAPPED_NATIVE = wrappedNative;
@@ -151,10 +151,13 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                               OWNER LOGIC
     //////////////////////////////////////////////////////////////*/
 
-    uint32 private constant MAX_FILLS_PER_UPKEEP = 10;
-    uint32 public constant UPKEEP_GAS_LIMIT = MAX_FILLS_PER_UPKEEP * 300_000;
+    uint32 public maxFillsPerUpkeep = 10;
 
-    function setupLimitOrder(IUniswapV3Pool pool, uint256 initialUpkeepFunds) external onlyOwner {
+    function setMaxFillsPerUpkeep(uint32 newVal) external onlyOwner {
+        maxFillsPerUpkeep = newVal;
+    }
+
+    function setupLimitOrder(UniswapV3Pool pool, uint256 initialUpkeepFunds) external onlyOwner {
         // Check if Limit Order is already setup for `pool`.
         if (address(poolToData[pool].token0) != address(0)) revert LimitOrderRegistry__PoolAlreadySetup(address(pool));
 
@@ -166,11 +169,11 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             string memory name = "Limit Order Registry";
             uint96 amount = uint96(initialUpkeepFunds);
             bytes memory upkeepCreationData = abi.encodeWithSelector(
-                KeeperRegistrar.register.selector,
+                IKeeperRegistrar.register.selector,
                 name,
                 abi.encode(0),
                 address(this),
-                UPKEEP_GAS_LIMIT,
+                maxFillsPerUpkeep * upkeepGasLimit,
                 owner,
                 // abi.encode(pool),
                 abi.encode(0),
@@ -207,7 +210,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         upkeepGasPrice = gasPrice;
     }
 
-    function withdrawSwapFees(IUniswapV3Pool pool) external onlyOwner {
+    function withdrawSwapFees(UniswapV3Pool pool) external onlyOwner {
         PoolData storage data = poolToData[pool];
 
         if (data.token0Fees > 0) {
@@ -231,7 +234,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
 
     // targetTick is the tick where your limit order would be filled.
     function newOrder(
-        IUniswapV3Pool pool,
+        UniswapV3Pool pool,
         int24 targetTick,
         uint96 amount,
         bool direction,
@@ -328,7 +331,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     }
 
     function claimOrder(
-        IUniswapV3Pool pool,
+        UniswapV3Pool pool,
         uint256 userDataId,
         address user
     ) external payable returns (uint256) {
@@ -344,7 +347,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         } else {
             WRAPPED_NATIVE.safeTransferFrom(sender, address(this), userClaim.feePerUser);
         }
-
         for (uint256 i; i < userLength; ++i) {
             if (userData[userDataId][i].user == user) {
                 // Found our user we are claiming for.
@@ -384,7 +386,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
      * @notice This logic will send ALL the swap fees from a position to the last person that cancels the order.
      */
     function cancelOrder(
-        IUniswapV3Pool pool,
+        UniswapV3Pool pool,
         int24 targetTick,
         bool direction
     ) external returns (uint128 amount0, uint128 amount1) {
@@ -494,96 +496,98 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                      CHAINLINK AUTOMATION LOGIC
     //////////////////////////////////////////////////////////////*/
 
+    // So this function just returns a target uint256, and a direction bool
+    // Where the target is the new closest order to being ITM, but that is not ITM.
+    // Weird thing is that this target order can be MIXED or OTM. But as long as it is not ITM, it should be set as the new tail or head center, depending on direction!
     function checkUpkeep(bytes calldata checkData) external view returns (bool upkeepNeeded, bytes memory performData) {
-        uint256[MAX_FILLS_PER_UPKEEP] memory ordersToFulfill;
-        uint256 fillCount;
-        bool walkDirection;
-        IUniswapV3Pool pool = abi.decode(checkData, (IUniswapV3Pool));
+        UniswapV3Pool pool = abi.decode(checkData, (UniswapV3Pool));
         (, int24 currentTick, , , , , ) = pool.slot0();
         PoolData memory data = poolToData[pool];
         Order memory order;
         OrderStatus status;
-        uint256 target;
+        bool walkDirection;
 
         if (data.centerHead != 0) {
             // centerHead is set, check if it is ITM.
             order = orderLinkedList[data.centerHead];
             status = _getOrderStatus(currentTick, order.tickLower, order.tickUpper, order.direction);
             if (status == OrderStatus.ITM) {
-                ordersToFulfill[0] = data.centerHead;
-                fillCount++;
                 walkDirection = true; // Walk towards head of list.
-                target = order.head;
+                upkeepNeeded = true;
+                performData = abi.encode(pool, walkDirection);
+                return (upkeepNeeded, performData);
             }
         }
-        if (!walkDirection && data.centerTail != 0) {
+        if (data.centerTail != 0) {
             // If walk direction has not been set, then we know, no head orders are ITM.
             // So check tail orders.
             order = orderLinkedList[data.centerTail];
             status = _getOrderStatus(currentTick, order.tickLower, order.tickUpper, order.direction);
             if (status == OrderStatus.ITM) {
-                ordersToFulfill[0] = data.centerTail;
-                fillCount++;
                 walkDirection = false; // Walk towards tail of list.
-                target = order.tail;
-            } else {
-                // No orders are ITM.
-                return (false, abi.encode(0));
+                upkeepNeeded = true;
+                performData = abi.encode(pool, walkDirection);
+                return (upkeepNeeded, performData);
             }
         }
-
-        while (target != 0 && fillCount < MAX_FILLS_PER_UPKEEP) {
-            order = orderLinkedList[target];
-            // Check if target is ITM.
-            status = _getOrderStatus(currentTick, order.tickLower, order.tickUpper, order.direction);
-            if (status == OrderStatus.ITM) {
-                ordersToFulfill[fillCount] = target;
-                fillCount++;
-                target = walkDirection ? order.head : order.tail;
-            } else {
-                // No more orders need to be filled.
-                break;
-            }
-        }
-
-        // Check if there are any orders to fill.
-        if (fillCount > 0) {
-            upkeepNeeded = true;
-            performData = abi.encode(pool, ordersToFulfill);
-        }
+        return (false, abi.encode(0));
     }
 
+    // Maybe for better input sanitation, this should only accept a single node, the last node to fulfill in the order.
+    // So then how do we enforce the max fulfillments per upkeep? I mean we could just keep a count.
+    // Then the keeper can just keep sending the TX with the same input data until it is done processing them.
     function performUpkeep(bytes calldata performData) external {
-        (IUniswapV3Pool pool, uint256[MAX_FILLS_PER_UPKEEP] memory ordersToFulfill) = abi.decode(
-            performData,
-            (IUniswapV3Pool, uint256[10])
-        );
+        (UniswapV3Pool pool, bool walkDirection) = abi.decode(performData, (UniswapV3Pool, bool));
+
+        if (address(poolToData[pool].token0) == address(0)) revert LimitOrderRegistry__PoolNotSetup(address(pool));
+
+        PoolData storage data = poolToData[pool];
 
         // Estimate gas cost.
         uint256 estimatedFee = upkeepGasLimit * upkeepGasPrice;
 
-        // Fulfill orders.
         (, int24 currentTick, , , , , ) = pool.slot0();
         bool orderFilled;
-        uint128 token0Fees;
-        uint128 token1Fees;
-        for (uint256 i; i < MAX_FILLS_PER_UPKEEP; ++i) {
-            uint256 target = ordersToFulfill[i];
+        uint128 totalToken0Fees;
+        uint128 totalToken1Fees;
+
+        // Fulfill orders.
+        uint256 target = walkDirection ? data.centerHead : data.centerTail;
+        for (uint256 i; i < maxFillsPerUpkeep; ++i) {
             if (target == 0) break;
             Order storage order = orderLinkedList[target];
             OrderStatus status = _getOrderStatus(currentTick, order.tickLower, order.tickUpper, order.direction);
             if (status == OrderStatus.ITM) {
-                (token0Fees, token1Fees) = _fulfillOrder(target, pool, order, estimatedFee);
-                emit OrderFilled(order.userDataId, address(pool));
+                (uint128 token0Fees, uint128 token1Fees) = _fulfillOrder(target, pool, order, estimatedFee);
+                totalToken0Fees += token0Fees;
+                totalToken1Fees += token1Fees;
+                target = walkDirection ? order.head : order.tail;
+                // Zero out orders head and tail values.
+                order.head = 0;
+                order.tail = 0;
                 orderFilled = true;
-            }
+                emit OrderFilled(order.userDataId, address(pool));
+            } else break;
         }
 
-        // Save fees.
-        if (token0Fees > 0) poolToData[pool].token0Fees += token0Fees;
-        if (token1Fees > 0) poolToData[pool].token1Fees += token1Fees;
-
         if (!orderFilled) revert LimitOrderRegistry__NoOrdersToFulfill();
+
+        // Save fees.
+        if (totalToken0Fees > 0) poolToData[pool].token0Fees += totalToken0Fees;
+        if (totalToken1Fees > 0) poolToData[pool].token1Fees += totalToken1Fees;
+
+        // Update center.
+        if (walkDirection) {
+            data.centerHead = target;
+            // Need to reconnect list.
+            orderLinkedList[data.centerTail].head = target;
+            if (target != 0) orderLinkedList[target].tail = data.centerTail;
+        } else {
+            data.centerTail = target;
+            // Need to reconnect list.
+            orderLinkedList[data.centerHead].tail = target;
+            if (target != 0) orderLinkedList[target].head = data.centerHead;
+        }
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -649,7 +653,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
      *            will try to arbitrage the attackers pool.
      */
     function _updateCenter(
-        IUniswapV3Pool pool,
+        UniswapV3Pool pool,
         uint256 positionId,
         int24 currentTick,
         int24 upper,
@@ -800,7 +804,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         uint128 amount1Min = amount1 == 0 ? 0 : (amount1 * 0.9999e18) / 1e18;
 
         // Create mint params.
-        INonfungiblePositionManager.MintParams memory params = INonfungiblePositionManager.MintParams({
+        NonfungiblePositionManager.MintParams memory params = NonfungiblePositionManager.MintParams({
             token0: address(data.token0),
             token1: address(data.token1),
             fee: data.fee,
@@ -840,7 +844,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         uint128 amount1Min = amount1 == 0 ? 0 : (amount1 * 0.9999e18) / 1e18;
 
         // Create increase liquidity params.
-        INonfungiblePositionManager.IncreaseLiquidityParams memory params = INonfungiblePositionManager
+        NonfungiblePositionManager.IncreaseLiquidityParams memory params = NonfungiblePositionManager
             .IncreaseLiquidityParams({
                 tokenId: positionId,
                 amount0Desired: amount0,
@@ -884,7 +888,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
 
     function _fulfillOrder(
         uint256 target,
-        IUniswapV3Pool pool,
+        UniswapV3Pool pool,
         Order storage order,
         uint256 estimatedFee
     ) internal returns (uint128 token0Fees, uint128 token1Fees) {
@@ -917,21 +921,18 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         // Zero out order balances.
         order.token0Amount = 0;
         order.token1Amount = 0;
-
-        // Remove order from linked list.
-        _removeOrderFromList(target, pool, order);
     }
 
     function _takeFromPosition(
         uint256 target,
-        IUniswapV3Pool pool,
+        UniswapV3Pool pool,
         uint256 liquidityPercent
     ) internal returns (uint128, uint128) {
         (, , , , , , , uint128 liquidity, , , , ) = positionManager.positions(target);
         liquidity = uint128(uint256(liquidity * liquidityPercent) / 1e18);
 
         // Create decrease liquidity params.
-        INonfungiblePositionManager.DecreaseLiquidityParams memory params = INonfungiblePositionManager
+        NonfungiblePositionManager.DecreaseLiquidityParams memory params = NonfungiblePositionManager
             .DecreaseLiquidityParams({
                 tokenId: target,
                 liquidity: liquidity,
@@ -961,7 +962,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             amount1Max = amount1;
         }
         // Create fee collection params.
-        INonfungiblePositionManager.CollectParams memory collectParams = INonfungiblePositionManager.CollectParams({
+        NonfungiblePositionManager.CollectParams memory collectParams = NonfungiblePositionManager.CollectParams({
             tokenId: target,
             recipient: address(this),
             amount0Max: amount0Max,
@@ -985,7 +986,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
 
     function _removeOrderFromList(
         uint256 target,
-        IUniswapV3Pool pool,
+        UniswapV3Pool pool,
         Order storage order
     ) internal {
         // Checks if order is the center, if so then it will set it to the the center orders head(which is okay if it is zero).
@@ -1011,7 +1012,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                             VIEW LOGIC
     //////////////////////////////////////////////////////////////*/
 
-    function viewList(IUniswapV3Pool pool) public view returns (uint256[10] memory heads, uint256[10] memory tails) {
+    function viewList(UniswapV3Pool pool) public view returns (uint256[10] memory heads, uint256[10] memory tails) {
         uint256 next = poolToData[pool].centerHead;
         for (uint256 i; i < 10; ++i) {
             if (next == 0) break;
@@ -1030,7 +1031,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     }
 
     function findSpot(
-        IUniswapV3Pool pool,
+        UniswapV3Pool pool,
         uint256 startingNode,
         int24 targetTick
     ) external view returns (uint256 proposedHead, uint256 proposedTail) {
@@ -1048,7 +1049,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     }
 
     // TODO view function that takes a target tick, and tries to find the node closest to it.
-    function findNode(IUniswapV3Pool pool, int24 targetTick) external view returns (uint256 closestNode) {
+    function findNode(UniswapV3Pool pool, int24 targetTick) external view returns (uint256 closestNode) {
         int24 tickSpacing = pool.tickSpacing();
         // Make sure targetTick is divisible by spacing.
         if (targetTick % tickSpacing != 0) revert LimitOrderRegistry__InvalidTargetTick(targetTick, tickSpacing);
