@@ -1,6 +1,17 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.16;
 
+struct RegistrationParams {
+    string name;
+    bytes encryptedEmail;
+    address upkeepContract;
+    uint32 gasLimit;
+    address adminAddress;
+    bytes checkData;
+    bytes offchainConfig;
+    uint96 amount;
+}
+
 /**
  * @notice Contract to accept requests for upkeep registrations
  * @dev There are 2 registration workflows in this contract
@@ -35,4 +46,6 @@ interface IKeeperRegistrar {
         uint8 source,
         address sender
     ) external;
+
+    function registerUpkeep(RegistrationParams calldata requestParams) external returns (uint256);
 }

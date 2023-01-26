@@ -9,7 +9,7 @@ import { UniswapV3Pool } from "src/interfaces/uniswapV3/UniswapV3Pool.sol";
 import { NonfungiblePositionManager } from "src/interfaces/uniswapV3/NonfungiblePositionManager.sol";
 import { ERC721Holder } from "@openzeppelin/contracts/token/ERC721/utils/ERC721Holder.sol";
 import { LinkTokenInterface } from "@chainlink/contracts/src/v0.8/interfaces/LinkTokenInterface.sol";
-import { IKeeperRegistrar } from "src/interfaces/chainlink/IKeeperRegistrar.sol";
+import { IKeeperRegistrar, RegistrationParams } from "src/interfaces/chainlink/IKeeperRegistrar.sol";
 import { Context } from "@openzeppelin/contracts/utils/Context.sol";
 
 import { console } from "@forge-std/Test.sol";
@@ -78,6 +78,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     uint16 public maxFillsPerUpkeep = 10;
 
     // Zero is reserved
+    // TODO this could be made bigger to uint176 if need be.
     uint128 public userDataCount = 1;
 
     mapping(uint256 => UserData[]) private userData;
@@ -164,24 +165,20 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         // Create Upkeep.
         if (initialUpkeepFunds > 0) {
             // Owner wants to automatically create an upkeep for new pool.
-            SafeTransferLib.safeTransferFrom(ERC20(address(LINK)), owner, address(this), initialUpkeepFunds);
-            string memory name = "Limit Order Registry";
-            uint96 amount = uint96(initialUpkeepFunds);
-            bytes memory upkeepCreationData = abi.encodeWithSelector(
-                IKeeperRegistrar.register.selector,
-                name,
-                abi.encode(0),
-                address(this),
-                maxFillsPerUpkeep * upkeepGasLimit,
-                owner,
-                // abi.encode(pool),
-                abi.encode(0),
-                amount,
-                77,
-                address(this)
-            );
-            // TODO to convert above to work with V2, comment out 77 and uncommment abi.encode(pool)
-            LINK.transferAndCall(address(REGISTRAR), initialUpkeepFunds, upkeepCreationData);
+            // SafeTransferLib.safeTransferFrom(ERC20(address(LINK)), owner, address(this), initialUpkeepFunds);
+            ERC20(address(LINK)).safeTransferFrom(owner, address(this), initialUpkeepFunds);
+            ERC20(address(LINK)).safeApprove(address(REGISTRAR), initialUpkeepFunds);
+            RegistrationParams memory params = RegistrationParams({
+                name: "Limit Order Registry",
+                encryptedEmail: abi.encode(0),
+                upkeepContract: address(this),
+                gasLimit: uint32(maxFillsPerUpkeep * upkeepGasLimit),
+                adminAddress: owner,
+                checkData: abi.encode(pool),
+                offchainConfig: abi.encode(0),
+                amount: uint96(initialUpkeepFunds)
+            });
+            REGISTRAR.registerUpkeep(params);
         }
 
         // poolToData
@@ -233,6 +230,26 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     //////////////////////////////////////////////////////////////*/
 
     // targetTick is the tick where your limit order would be filled.
+    /**
+     * @notice Creates a new limit order for a specific pool.
+     * @dev Limit orders can be created to buy either token0, or token1 of the pool.
+     * @param pool the Uniswap V3 pool to create a limit order on.
+     * @param targetTick the tick, that when `pool`'s tick passes, the order will be completely fulfilled
+     * @param amount the amount of the input token to sell for the desired token out
+     * @param direction bool indicating what the desired token out is
+     *                  - true  token in = token0 ; token out = token1
+     *                  - false token in = token1 ; token out = token0
+     * @param startingNode an NFT position id indicating where this contract should start searching for a spot in the list
+     *                     - can be zero which defaults to starting the search at center of list
+     * @dev reverts if
+     *      - pool is not setup
+     *      - targetTick is not divisible by the pools tick spacing
+     *      - the new order would be ITM
+     *      - the new order does not meet minimum liquidity requirements
+     *      - transferFrom fails
+
+     * @dev Emits a `NewOrder` event which contains meta data about the order including the orders `userDataId`(which is used for claiming/cancelling).
+     */
     function newOrder(
         UniswapV3Pool pool,
         int24 targetTick,
@@ -330,6 +347,14 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         emit NewOrder(_msgSender(), userDataId, address(pool), amount, userTotal);
     }
 
+    /**
+     * @notice Users can claim fulfilled orders by passing in the `userDataId` corresponding to the order they want to claim.
+     * @param pool the Uniswap V3 pool to create a limit order on.
+     * @param userDataId the userDataId corresponding to a fulfilled order to claim
+     * @param user the address of the user in the order to claim for
+     * @dev Caller must either approve this contract to spend their Wrapped Native token, and have at least `getFeePerUser` tokens in their wallet.
+     *      Or caller must send `getFeePerUser` value with this call.
+     */
     function claimOrder(
         UniswapV3Pool pool,
         uint128 userDataId,
@@ -383,7 +408,11 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     }
 
     /**
-     * @notice This logic will send ALL the swap fees from a position to the last person that cancels the order.
+     * @notice Allows users to cancel orders as long as they are completely OTM.
+     * @param pool the Uniswap V3 pool that contains the limit order to cancel
+     * @param targetTick the targetTick of the order you want to cancel
+     * @param direction bool indication the direction of the order
+     * @dev This logic will send ALL the swap fees from a position to the last person that cancels the order.
      */
     function cancelOrder(
         UniswapV3Pool pool,
@@ -658,23 +687,14 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             // Check if centerTail needs to be updated.
             if (data.centerTail == 0) {
                 // Currently no centerTail, so this order must become it.
-                // Make sure the centerHead is not ITM, if it has been set.
-                if (data.centerHead != 0) {
-                    Order memory centerHead = orderLinkedList[data.centerHead];
-                    _revertIfOrderITM(currentTick, centerHead);
-                }
                 poolToData[pool].centerTail = positionId;
             } else {
                 Order memory centerTail = orderLinkedList[data.centerTail];
                 if (upper > centerTail.tickUpper) {
                     // New position is closer to the current pool tick, so it becomes new centerTail.
                     // Make sure current centerTail is OTM.
-                    _revertIfOrderITM(currentTick, centerTail);
-                    // Make sure the centerHead is not ITM, if it has been set.
-                    if (data.centerHead != 0) {
-                        Order memory centerHead = orderLinkedList[data.centerHead];
-                        _revertIfOrderITM(currentTick, centerHead);
-                    }
+                    // TODO below check doesn't really do anything, bc if above if statement is satisfied, then the new order MUST be ITM, which that would have reverted earlier on.
+                    // _revertIfOrderITM(currentTick, centerTail);
                     poolToData[pool].centerTail = positionId;
                 }
                 // else nothing to do.
@@ -683,23 +703,13 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             // Check if centerHead needs to be updated.
             if (data.centerHead == 0) {
                 // Currently no centerHead, so this order must become it.
-                // Make sure the centerTail is not ITM, if it has been set.
-                if (data.centerTail != 0) {
-                    Order memory centerTail = orderLinkedList[data.centerTail];
-                    _revertIfOrderITM(currentTick, centerTail);
-                }
                 poolToData[pool].centerHead = positionId;
             } else {
                 Order memory centerHead = orderLinkedList[data.centerHead];
                 if (lower < centerHead.tickLower) {
                     // New position is closer to the current pool tick, so it becomes new centerHead.
                     // Make sure current centerHead is OTM.
-                    _revertIfOrderITM(currentTick, centerHead);
-                    // Make sure the centerTail is not ITM, if it has been set.
-                    if (data.centerTail != 0) {
-                        Order memory centerTail = orderLinkedList[data.centerTail];
-                        _revertIfOrderITM(currentTick, centerTail);
-                    }
+                    // _revertIfOrderITM(currentTick, centerHead);
                     poolToData[pool].centerHead = positionId;
                 }
                 // else nothing to do.
@@ -718,7 +728,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         PoolData memory data
     ) internal pure {
         if (order.head == 0 && order.tail == 0) {
-            // Possible but the order my be centerTail or centerHead.
+            // Possible but the order may be centerTail or centerHead.
             if (data.centerHead != node && data.centerTail != node) revert LimitOrderRegistry__OrderNotInList(node);
         }
     }
@@ -1006,6 +1016,9 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                             VIEW LOGIC
     //////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Helper function to view the top 20 entries in the linked list.
+     */
     function viewList(UniswapV3Pool pool) public view returns (uint256[10] memory heads, uint256[10] memory tails) {
         uint256 next = poolToData[pool].centerHead;
         for (uint256 i; i < 10; ++i) {
@@ -1024,6 +1037,15 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         }
     }
 
+    /**
+     * @notice Helper function that finds the appropriate spot in the linked list for a new order.
+     * @param pool the Uniswap V3 pool you want to create an order in
+     * @param startingNode the UniV3 position Id to start looking
+     * @param targetTick the targetTick of the order you want to place
+     * @return proposedHead , proposedTail pr the correct head and tail for the new order
+     * @dev if both head and tail are zero, just pass in zero for the `startingNode`
+     *      otherwise pass in either the nonzero head or nonzero tail for the `startingNode`
+     */
     function findSpot(
         UniswapV3Pool pool,
         uint256 startingNode,
@@ -1038,11 +1060,15 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         (proposedHead, proposedTail) = _findSpot(data, startingNode, targetTick);
     }
 
+    /**
+     * @notice Helper function to get the fee per user for a specific order.
+     */
     function getFeePerUser(uint128 userDataId) external view returns (uint128) {
         return claim[userDataId].feePerUser;
     }
 
     // TODO view function that takes a target tick, and tries to find the node closest to it.
+    /// @dev not yet done.
     function findNode(UniswapV3Pool pool, int24 targetTick) external view returns (uint256 closestNode) {
         int24 tickSpacing = pool.tickSpacing();
         // Make sure targetTick is divisible by spacing.

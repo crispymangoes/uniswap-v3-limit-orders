@@ -22,7 +22,7 @@ contract LimitOrderRegistryTest is Test {
 
     LinkTokenInterface private LINK = LinkTokenInterface(0xb0897686c545045aFc77CF20eC7A532E3120E0F1);
 
-    KeeperRegistrar private REGISTRAR = KeeperRegistrar(0xDb8e8e2ccb5C033938736aa89Fe4fa1eDfD15a1d);
+    KeeperRegistrar private REGISTRAR = KeeperRegistrar(0x9a811502d843E5a03913d5A2cfb646c11463467A);
 
     ERC20 private USDC = ERC20(0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174);
     ERC20 private WETH = ERC20(0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619);
@@ -56,7 +56,10 @@ contract LimitOrderRegistryTest is Test {
         registry = new LimitOrderRegistry(address(this), positionManger, WMATIC, LINK, REGISTRAR);
         registry.setMinimumAssets(1, USDC);
         registry.setMinimumAssets(1, WETH);
-        registry.setupLimitOrder(USDC_WETH_05_POOL, 0);
+
+        deal(address(LINK), address(this), 10e18);
+        LINK.approve(address(registry), 10e18);
+        registry.setupLimitOrder(USDC_WETH_05_POOL, 10e18);
     }
 
     // ========================================= INITIALIZATION TEST =========================================
@@ -417,6 +420,9 @@ contract LimitOrderRegistryTest is Test {
     }
 
     function testUpdatingCenterWhilePoolTickManipulated() external {
+        uint256[10] memory expectedHeads;
+        uint256[10] memory expectedTails;
+
         // Create orders to buy WETH.
         uint256 amount = 1_000e6;
         deal(address(USDC), address(this), amount);
@@ -432,27 +438,6 @@ contract LimitOrderRegistryTest is Test {
         // Skew pool tick before placing order.
         {
             address[] memory path = new address[](2);
-            path[0] = address(USDC);
-            path[1] = address(WETH);
-
-            uint24[] memory poolFees = new uint24[](1);
-            poolFees[0] = 500;
-
-            uint256 swapAmount = 1_000_000e6;
-            deal(address(USDC), address(this), swapAmount);
-            _swap(path, poolFees, swapAmount);
-        }
-
-        // Create orders to buy WETH.
-        amount = 1_000e6;
-        deal(address(USDC), address(this), amount);
-        USDC.approve(address(registry), amount);
-        vm.expectRevert(abi.encodeWithSelector(LimitOrderRegistry.LimitOrderRegistry__CenterITM.selector));
-        registry.newOrder(USDC_WETH_05_POOL, 204900, uint96(amount), true, 0);
-
-        // Skew pool tick before placing order.
-        {
-            address[] memory path = new address[](2);
             path[0] = address(WETH);
             path[1] = address(USDC);
 
@@ -464,11 +449,55 @@ contract LimitOrderRegistryTest is Test {
             _swap(path, poolFees, swapAmount);
         }
 
+        // Create orders to buy WETH.
+        // This is allowed since the new order does not update the center.
+        amount = 1_000e6;
+        deal(address(USDC), address(this), amount);
+        USDC.approve(address(registry), amount);
+        registry.newOrder(USDC_WETH_05_POOL, 205300, uint96(amount), true, 0);
+
+        expectedHeads[0] = id0;
+        expectedHeads[1] = id2;
+        expectedTails[0] = id1;
+        _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
+
+        // But this should fail because new order tries to update center head.
+        amount = 1_000e6;
+        deal(address(USDC), address(this), amount);
+        USDC.approve(address(registry), amount);
+        vm.expectRevert(
+            abi.encodeWithSelector(LimitOrderRegistry.LimitOrderRegistry__OrderITM.selector, 205240, 204900, true)
+        );
+        registry.newOrder(USDC_WETH_05_POOL, 204900, uint96(amount), true, 0);
+
+        // Skew pool tick before placing order.
+        {
+            address[] memory path = new address[](2);
+            path[0] = address(USDC);
+            path[1] = address(WETH);
+
+            uint24[] memory poolFees = new uint24[](1);
+            poolFees[0] = 500;
+
+            uint256 swapAmount = 1_500_000e6;
+            deal(address(USDC), address(this), swapAmount);
+            _swap(path, poolFees, swapAmount);
+        }
+
         // Create orders to sell WETH.
+        // This is allowed since the new order does not update the center tail.
         amount = 1e18;
         deal(address(WETH), address(this), amount);
         WETH.approve(address(registry), amount);
-        vm.expectRevert(abi.encodeWithSelector(LimitOrderRegistry.LimitOrderRegistry__CenterITM.selector));
+        registry.newOrder(USDC_WETH_05_POOL, 204700, uint96(amount), false, 0);
+
+        // But this should fail because new order tries to update center tail.
+        amount = 1e18;
+        deal(address(WETH), address(this), amount);
+        WETH.approve(address(registry), amount);
+        vm.expectRevert(
+            abi.encodeWithSelector(LimitOrderRegistry.LimitOrderRegistry__OrderITM.selector, 204771, 204870, false)
+        );
         registry.newOrder(USDC_WETH_05_POOL, 204870, uint96(amount), false, 0);
     }
 
