@@ -32,8 +32,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         ERC20 token0;
         ERC20 token1;
         uint24 fee;
-        uint128 token0Fees; // Swap fees from input token, withdrawable by admin
-        uint128 token1Fees; // Swap fees from input token, withdrawable by admin
     }
 
     struct Order {
@@ -63,6 +61,11 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     /*//////////////////////////////////////////////////////////////
                              GLOBAL STATE
     //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Stores swap fees earned from limit order where the input token earns swap fees.
+     */
+    mapping(address => uint256) public tokenToSwapFees;
 
     // How users claim their tokens, just need to pass in the uint120 userDataId
     mapping(uint128 => Claim) public claim;
@@ -111,6 +114,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     error LimitOrderRegistry__MinimumNotSet(address asset);
     error LimitOrderRegistry__MinimumNotMet(address asset, uint256 minimum, uint256 amount);
     error LimitOrderRegistry__InvalidTickRange(int24 upper, int24 lower);
+    error LimitOrderRegistry__ZeroFeesToWithdraw(address token);
 
     /*//////////////////////////////////////////////////////////////
                                  ENUMS
@@ -161,7 +165,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         // Check if Limit Order is already setup for `pool`.
         if (address(poolToData[pool].token0) != address(0)) revert LimitOrderRegistry__PoolAlreadySetup(address(pool));
 
-        // TODO can use registerUpkeep instead
         // Create Upkeep.
         if (initialUpkeepFunds > 0) {
             // Owner wants to automatically create an upkeep for new pool.
@@ -187,9 +190,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             centerTail: 0,
             token0: ERC20(pool.token0()),
             token1: ERC20(pool.token1()),
-            fee: pool.fee(),
-            token0Fees: 0,
-            token1Fees: 0
+            fee: pool.fee()
         });
     }
 
@@ -207,17 +208,14 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         upkeepGasPrice = gasPrice;
     }
 
-    function withdrawSwapFees(UniswapV3Pool pool) external onlyOwner {
-        PoolData storage data = poolToData[pool];
+    function withdrawSwapFees(address tokenFeeIsIn) external onlyOwner {
+        uint256 fee = tokenToSwapFees[tokenFeeIsIn];
 
-        if (data.token0Fees > 0) {
-            data.token0.safeTransfer(owner, data.token0Fees);
-            data.token0Fees = 0;
-        }
-        if (data.token1Fees > 0) {
-            data.token1.safeTransfer(owner, data.token1Fees);
-            data.token1Fees = 0;
-        }
+        // Make sure there are actually fees to withdraw.
+        if (fee == 0) revert LimitOrderRegistry__ZeroFeesToWithdraw(tokenFeeIsIn);
+
+        tokenToSwapFees[tokenFeeIsIn] = 0;
+        ERC20(tokenFeeIsIn).safeTransfer(owner, fee);
     }
 
     function withdrawNative() external onlyOwner {
@@ -229,7 +227,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                         USER ORDER MANAGEMENT LOGIC
     //////////////////////////////////////////////////////////////*/
 
-    // targetTick is the tick where your limit order would be filled.
     /**
      * @notice Creates a new limit order for a specific pool.
      * @dev Limit orders can be created to buy either token0, or token1 of the pool.
@@ -363,15 +360,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         Claim storage userClaim = claim[userDataId];
         uint256 userLength = userData[userDataId].length;
 
-        // Transfer fee in.
-        address sender = _msgSender();
-        if (msg.value >= userClaim.feePerUser) {
-            // refund if necessary.
-            uint256 refund = msg.value - userClaim.feePerUser;
-            if (refund > 0) payable(sender).transfer(refund);
-        } else {
-            WRAPPED_NATIVE.safeTransferFrom(sender, address(this), userClaim.feePerUser);
-        }
         for (uint256 i; i < userLength; ++i) {
             if (userData[userDataId][i].user == user) {
                 // Found our user we are claiming for.
@@ -396,10 +384,21 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                     user: userData[userDataId][userLength - 1].user,
                     depositAmount: userData[userDataId][userLength - 1].depositAmount
                 });
-                delete userData[userDataId][userLength - 1];
+                userData[userDataId].pop();
 
                 // Transfer tokens owed to user.
                 tokenOut.safeTransfer(user, owed);
+
+                // Transfer fee in.
+                address sender = _msgSender();
+                if (msg.value >= userClaim.feePerUser) {
+                    // refund if necessary.
+                    uint256 refund = msg.value - userClaim.feePerUser;
+                    if (refund > 0) payable(sender).transfer(refund);
+                } else {
+                    WRAPPED_NATIVE.safeTransferFrom(sender, address(this), userClaim.feePerUser);
+                }
+
                 return owed;
             }
         }
@@ -512,12 +511,12 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             if (amount0 > 0) poolToData[pool].token0.safeTransfer(sender, amount0);
             else revert LimitOrderRegistry__NoLiquidityInOrder();
             // Save any swap fees.
-            if (amount1 > 0) poolToData[pool].token1Fees += amount1;
+            if (amount1 > 0) tokenToSwapFees[address(poolToData[pool].token1)] += amount1;
         } else {
             if (amount1 > 0) poolToData[pool].token1.safeTransfer(sender, amount1);
             else revert LimitOrderRegistry__NoLiquidityInOrder();
             // Save any swap fees.
-            if (amount0 > 0) poolToData[pool].token0Fees += amount0;
+            if (amount0 > 0) tokenToSwapFees[address(poolToData[pool].token0)] += amount0;
         }
     }
 
@@ -596,8 +595,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         if (!orderFilled) revert LimitOrderRegistry__NoOrdersToFulfill();
 
         // Save fees.
-        if (totalToken0Fees > 0) poolToData[pool].token0Fees += totalToken0Fees;
-        if (totalToken1Fees > 0) poolToData[pool].token1Fees += totalToken1Fees;
+        if (totalToken0Fees > 0) tokenToSwapFees[address(poolToData[pool].token0)] += totalToken0Fees;
+        if (totalToken1Fees > 0) tokenToSwapFees[address(poolToData[pool].token1)] += totalToken1Fees;
 
         // Update center.
         if (walkDirection) {

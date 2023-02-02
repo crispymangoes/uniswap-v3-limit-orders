@@ -67,9 +67,6 @@ contract LimitOrderRegistryTest is Test {
     // ============================================= HAPPY PATH TEST =============================================
 
     function testHappyPath() external {
-        deal(address(LINK), address(this), 10e18);
-        LINK.approve(address(registry), 10e18);
-
         uint256 amount = 1_000e6;
         deal(address(USDC), address(this), amount);
 
@@ -278,7 +275,12 @@ contract LimitOrderRegistryTest is Test {
         registry.claimOrder(USDC_WETH_05_POOL, 4, address(this));
         registry.claimOrder(USDC_WETH_05_POOL, 5, address(this));
         registry.claimOrder(USDC_WETH_05_POOL, 6, address(this));
-        registry.claimOrder(USDC_WETH_05_POOL, 7, address(this));
+
+        deal(address(this), 1 ether);
+        uint256 fee = registry.getFeePerUser(7);
+        registry.claimOrder{ value: 1 ether }(USDC_WETH_05_POOL, 7, address(this));
+
+        assertEq(address(this).balance, 1 ether - fee, "Test contract balance should be original minus fee.");
     }
 
     function testMulitipleUsersInOneOrder() external {
@@ -965,7 +967,10 @@ contract LimitOrderRegistryTest is Test {
         _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
     }
 
+    // TODO add test where user overpays value.
     // TODO integration test where we reuse orders.
+    // TODO test adding and removing users from a user data array and make sure the array is updated properly
+    // TODO add a test where two pools with the same token are added(with different fee tiers)
 
     function _checkList(
         IUniswapV3Pool pool,
@@ -1031,5 +1036,9 @@ contract LimitOrderRegistryTest is Test {
                 amountOutMinimum: 0
             })
         );
+    }
+
+    receive() external payable {
+        // nothing to do
     }
 }
