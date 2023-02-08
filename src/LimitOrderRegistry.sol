@@ -94,7 +94,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     //////////////////////////////////////////////////////////////*/
 
     event NewOrder(address user, uint256 userDataId, address pool, uint96 amount, uint96 userTotal);
-    // event UserGroup(address user, uint256 group);
+
     event OrderFilled(uint256 userDataId, address pool);
 
     /*//////////////////////////////////////////////////////////////
@@ -115,6 +115,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     error LimitOrderRegistry__MinimumNotMet(address asset, uint256 minimum, uint256 amount);
     error LimitOrderRegistry__InvalidTickRange(int24 upper, int24 lower);
     error LimitOrderRegistry__ZeroFeesToWithdraw(address token);
+    error LimitOrderRegistry__ZeroNativeBalance();
 
     /*//////////////////////////////////////////////////////////////
                                  ENUMS
@@ -130,11 +131,9 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                               IMMUTABLES
     //////////////////////////////////////////////////////////////*/
 
-    // 0xE16Df59B887e3Caa439E0b29B42bA2e7976FD8b2
-
     ERC20 public immutable WRAPPED_NATIVE; // Mainnet 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2
 
-    NonfungiblePositionManager public immutable positionManager; // Mainnet 0xC36442b4a4522E871399CD717aBDD847Ab11FE88
+    NonfungiblePositionManager public immutable POSITION_MANAGER; // Mainnet 0xC36442b4a4522E871399CD717aBDD847Ab11FE88
 
     LinkTokenInterface public immutable LINK; // Mainnet 0x514910771AF9Ca656af840dff83E8264EcF986CA
 
@@ -147,7 +146,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         LinkTokenInterface link,
         IKeeperRegistrar registrar
     ) Owned(_owner) {
-        positionManager = _positionManager;
+        POSITION_MANAGER = _positionManager;
         WRAPPED_NATIVE = wrappedNative;
         LINK = link;
         REGISTRAR = registrar;
@@ -219,6 +218,10 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     }
 
     function withdrawNative() external onlyOwner {
+        uint256 wrappedNativeBalance = WRAPPED_NATIVE.balanceOf(address(this));
+        uint256 nativeBalance = address(this).balance;
+        // Make sure there is something to withdraw.
+        if (wrappedNativeBalance == 0 && nativeBalance == 0) revert LimitOrderRegistry__ZeroNativeBalance();
         WRAPPED_NATIVE.safeTransfer(owner, WRAPPED_NATIVE.balanceOf(address(this)));
         payable(owner).transfer(address(this).balance);
     }
@@ -799,8 +802,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         uint128 amount1,
         bool direction
     ) internal returns (uint256) {
-        if (direction) data.token0.safeApprove(address(positionManager), amount0);
-        else data.token1.safeApprove(address(positionManager), amount1);
+        if (direction) data.token0.safeApprove(address(POSITION_MANAGER), amount0);
+        else data.token1.safeApprove(address(POSITION_MANAGER), amount1);
 
         // 0.9999e18 accounts for rounding errors in the Uniswap V3 protocol.
         uint128 amount0Min = amount0 == 0 ? 0 : (amount0 * 0.9999e18) / 1e18;
@@ -822,7 +825,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         });
 
         // Supply liquidity to pool.
-        (uint256 tokenId, , , ) = positionManager.mint(params);
+        (uint256 tokenId, , , ) = POSITION_MANAGER.mint(params);
 
         // Revert if tokenId received is 0 id.
         // Zero token id is reserved for NULL values in linked list.
@@ -840,8 +843,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         uint128 amount1,
         bool direction
     ) internal {
-        if (direction) data.token0.safeApprove(address(positionManager), amount0);
-        else data.token1.safeApprove(address(positionManager), amount1);
+        if (direction) data.token0.safeApprove(address(POSITION_MANAGER), amount0);
+        else data.token1.safeApprove(address(POSITION_MANAGER), amount1);
 
         uint128 amount0Min = amount0 == 0 ? 0 : (amount0 * 0.9999e18) / 1e18;
         uint128 amount1Min = amount1 == 0 ? 0 : (amount1 * 0.9999e18) / 1e18;
@@ -858,7 +861,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             });
 
         // Increase liquidity in pool.
-        positionManager.increaseLiquidity(params);
+        POSITION_MANAGER.increaseLiquidity(params);
         // TODO confirm that full aproval is used, and if not the zero it out.
         // TODO so it looks like uni will round down by 10 wei or so sometimes, is that worth refunding the user? Probs not they'd spend more on the extra gas.
     }
@@ -931,7 +934,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         UniswapV3Pool pool,
         uint256 liquidityPercent
     ) internal returns (uint128, uint128) {
-        (, , , , , , , uint128 liquidity, , , , ) = positionManager.positions(target);
+        (, , , , , , , uint128 liquidity, , , , ) = POSITION_MANAGER.positions(target);
         liquidity = uint128(uint256(liquidity * liquidityPercent) / 1e18);
 
         // Create decrease liquidity params.
@@ -948,7 +951,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         uint128 amount0;
         uint128 amount1;
         {
-            (uint256 a0, uint256 a1) = positionManager.decreaseLiquidity(params);
+            (uint256 a0, uint256 a1) = POSITION_MANAGER.decreaseLiquidity(params);
             amount0 = uint128(a0);
             amount1 = uint128(a1);
         }
@@ -979,7 +982,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         uint256 token1Balance = token1.balanceOf(address(this));
 
         // Collect fees.
-        positionManager.collect(collectParams);
+        POSITION_MANAGER.collect(collectParams);
 
         amount0 = uint128(token0.balanceOf(address(this)) - token0Balance);
         amount1 = uint128(token1.balanceOf(address(this)) - token1Balance);
