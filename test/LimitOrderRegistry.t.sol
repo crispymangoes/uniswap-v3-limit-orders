@@ -969,7 +969,7 @@ contract LimitOrderRegistryTest is Test {
 
     // TODO add test where user overpays value.
     // TODO integration test where we reuse orders.
-    // TODO test adding and removing users from a user data array and make sure the array is updated properly
+    // TODO test adding and removing users from an order and make sure userCount is updated correctly
     // TODO add a test where two pools with the same token are added(with different fee tiers)
 
     function _checkList(

@@ -18,6 +18,7 @@ import { console } from "@forge-std/Test.sol";
 // ^^^^ YES they are passed by reference, and you can use that memory struct to change the state of a storage struct.
 // V2 Registry on Polygon 0xE16Df59B887e3Caa439E0b29B42bA2e7976FD8b2
 // V2 Registrar 0x9a811502d843E5a03913d5A2cfb646c11463467A
+// TODO add in a view function, or plan out some way for an external keeper contract to know if a certain account has claimable funds!
 contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holder, Context {
     using SafeTransferLib for ERC20;
 
@@ -38,6 +39,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         bool direction; //Determines what direction we are going
         int24 tickUpper;
         int24 tickLower;
+        uint64 userCount;
         uint128 userDataId; // The id where the user data is currently stored
         uint128 token0Amount; //Can either be the deposit amount or the amount got out of liquidity changing to the other token
         uint128 token1Amount; //uint128 is already a restriction in base uniswap V3 protocol.
@@ -84,7 +86,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     // TODO this could be made bigger to uint176 if need be.
     uint128 public userDataCount = 1;
 
-    mapping(uint256 => UserData[]) private userData;
+    mapping(uint256 => mapping(address => uint128)) private userDepositAmount;
 
     // Orders can be reused to save on NFT space
     // PositionId to Order
@@ -93,7 +95,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                                  EVENTS
     //////////////////////////////////////////////////////////////*/
 
-    event NewOrder(address user, uint256 userDataId, address pool, uint96 amount, uint96 userTotal);
+    event NewOrder(address user, uint256 userDataId, address pool, uint128 amount, uint128 userTotal);
 
     event OrderFilled(uint256 userDataId, address pool);
 
@@ -230,6 +232,16 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                         USER ORDER MANAGEMENT LOGIC
     //////////////////////////////////////////////////////////////*/
 
+    struct OrderDetails {
+        int24 tick;
+        int24 upper;
+        int24 lower;
+        uint128 userTotal;
+        uint256 positionId;
+        uint128 amount0;
+        uint128 amount1;
+    }
+
     /**
      * @notice Creates a new limit order for a specific pool.
      * @dev Limit orders can be created to buy either token0, or token1 of the pool.
@@ -253,33 +265,34 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     function newOrder(
         UniswapV3Pool pool,
         int24 targetTick,
-        uint96 amount,
+        uint128 amount,
         bool direction,
         uint256 startingNode
-    ) external {
+    ) external returns (uint128) {
         if (address(poolToData[pool].token0) == address(0)) revert LimitOrderRegistry__PoolNotSetup(address(pool));
 
-        (, int24 tick, , , , , ) = pool.slot0();
+        OrderDetails memory details;
+        address sender = _msgSender();
+
+        (, details.tick, , , , , ) = pool.slot0();
 
         // Determine upper and lower ticks.
-        int24 upper;
-        int24 lower;
         {
             int24 tickSpacing = pool.tickSpacing();
             // Make sure targetTick is divisible by spacing.
             if (targetTick % tickSpacing != 0) revert LimitOrderRegistry__InvalidTargetTick(targetTick, tickSpacing);
             if (direction) {
-                upper = targetTick;
-                lower = targetTick - tickSpacing;
+                details.upper = targetTick;
+                details.lower = targetTick - tickSpacing;
             } else {
-                upper = targetTick + tickSpacing;
-                lower = targetTick;
+                details.upper = targetTick + tickSpacing;
+                details.lower = targetTick;
             }
         }
         // Validate lower, upper,and direction.
         {
-            OrderStatus status = _getOrderStatus(tick, lower, upper, direction);
-            if (status != OrderStatus.OTM) revert LimitOrderRegistry__OrderITM(tick, targetTick, direction);
+            OrderStatus status = _getOrderStatus(details.tick, details.lower, details.upper, direction);
+            if (status != OrderStatus.OTM) revert LimitOrderRegistry__OrderITM(details.tick, targetTick, direction);
         }
 
         // Transfer assets into contract before setting any state.
@@ -288,63 +301,69 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             if (direction) assetIn = poolToData[pool].token0;
             else assetIn = poolToData[pool].token1;
             _enforceMinimumLiquidity(amount, assetIn);
-            assetIn.safeTransferFrom(_msgSender(), address(this), amount);
+            assetIn.safeTransferFrom(sender, address(this), amount);
         }
 
         // Get the position id.
-        uint256 positionId = getPositionFromTicks[lower][upper];
-        uint128 amount0;
-        uint128 amount1;
-        uint96 userTotal;
-        if (direction) amount0 = amount;
-        else amount1 = amount;
-        if (positionId == 0) {
+        details.positionId = getPositionFromTicks[details.lower][details.upper];
+
+        if (direction) details.amount0 = amount;
+        else details.amount1 = amount;
+        if (details.positionId == 0) {
             // Create new LP position(which adds liquidity)
             PoolData memory data = poolToData[pool];
-            positionId = _mintPosition(data, upper, lower, amount0, amount1, direction);
+            details.positionId = _mintPosition(
+                data,
+                details.upper,
+                details.lower,
+                details.amount0,
+                details.amount1,
+                direction
+            );
             // Add it to the list.
-            _addPositionToList(data, startingNode, targetTick, positionId);
+            _addPositionToList(data, startingNode, targetTick, details.positionId);
             // Set new orders upper and lower tick.
-            orderLinkedList[positionId].tickLower = lower;
-            orderLinkedList[positionId].tickUpper = upper;
+            orderLinkedList[details.positionId].tickLower = details.lower;
+            orderLinkedList[details.positionId].tickUpper = details.upper;
             //  create a new userDataId, direction.
-            _setupOrder(direction, positionId);
-            // update token0Amount, token1Amount, userData array(checking if user is already in it).
-            userTotal = _updateOrder(positionId, _msgSender(), amount);
+            _setupOrder(direction, details.positionId);
+            // update token0Amount, token1Amount, userDepositAmount mapping.
+            details.userTotal = _updateOrder(details.positionId, sender, amount);
 
-            _updateCenter(pool, positionId, tick, upper, lower);
+            _updateCenter(pool, details.positionId, details.tick, details.upper, details.lower);
 
             // Update getPositionFromTicks since we have a new LP position.
-            getPositionFromTicks[lower][upper] = positionId;
+            getPositionFromTicks[details.lower][details.upper] = details.positionId;
         } else {
             // Check if the position id is already being used in List.
-            Order memory order = orderLinkedList[positionId];
+            Order memory order = orderLinkedList[details.positionId];
             if (order.token0Amount > 0 || order.token1Amount > 0) {
                 // Order is already in the linked list, ignore proposed spot.
                 // Need to add liquidity,
                 PoolData memory data = poolToData[pool];
-                _addToPosition(data, positionId, amount0, amount1, direction);
-                // update token0Amount, token1Amount, userData array(checking if user is already in it).
-                userTotal = _updateOrder(positionId, _msgSender(), amount);
+                _addToPosition(data, details.positionId, details.amount0, details.amount1, direction);
+                // update token0Amount, token1Amount, userDepositAmount mapping.
+                details.userTotal = _updateOrder(details.positionId, sender, amount);
             } else {
                 // We already have this order.
                 PoolData memory data = poolToData[pool];
 
                 // Add it to the list.
-                _addPositionToList(data, startingNode, targetTick, positionId);
+                _addPositionToList(data, startingNode, targetTick, details.positionId);
                 //  create a new userDataId, direction.
-                _setupOrder(direction, positionId);
+                _setupOrder(direction, details.positionId);
 
                 // Need to add liquidity,
-                _addToPosition(data, positionId, amount0, amount1, direction);
-                // update token0Amount, token1Amount, userData array(checking if user is already in it).
-                userTotal = _updateOrder(positionId, _msgSender(), amount);
+                _addToPosition(data, details.positionId, details.amount0, details.amount1, direction);
+                // update token0Amount, token1Amount, userDepositAmount mapping.
+                details.userTotal = _updateOrder(details.positionId, sender, amount);
 
-                _updateCenter(pool, positionId, tick, upper, lower);
+                _updateCenter(pool, details.positionId, details.tick, details.upper, details.lower);
             }
         }
-        uint256 userDataId = orderLinkedList[positionId].userDataId;
-        emit NewOrder(_msgSender(), userDataId, address(pool), amount, userTotal);
+        uint128 userDataId = orderLinkedList[details.positionId].userDataId;
+        emit NewOrder(sender, userDataId, address(pool), amount, details.userTotal);
+        return userDataId;
     }
 
     /**
@@ -361,52 +380,42 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         address user
     ) external payable returns (uint256) {
         Claim storage userClaim = claim[userDataId];
-        uint256 userLength = userData[userDataId].length;
+        uint256 depositAmount = userDepositAmount[userDataId][user];
+        if (depositAmount == 0) revert LimitOrderRegistry__UserNotFound(user, userDataId);
 
-        for (uint256 i; i < userLength; ++i) {
-            if (userData[userDataId][i].user == user) {
-                // Found our user we are claiming for.
-                // Calculate owed amount.
-                uint256 totalTokenDeposited;
-                uint256 totalTokenOut;
-                ERC20 tokenOut;
-                if (userClaim.direction) {
-                    totalTokenDeposited = userClaim.token0Amount;
-                    totalTokenOut = userClaim.token1Amount;
-                    tokenOut = poolToData[pool].token1;
-                } else {
-                    totalTokenDeposited = userClaim.token1Amount;
-                    totalTokenOut = userClaim.token0Amount;
-                    tokenOut = poolToData[pool].token0;
-                }
+        // Zero out user balance.
+        delete userDepositAmount[userDataId][user];
 
-                uint256 owed = (totalTokenOut * userData[userDataId][i].depositAmount) / totalTokenDeposited;
-
-                // Remove user that claimed from array.
-                userData[userDataId][i] = UserData({
-                    user: userData[userDataId][userLength - 1].user,
-                    depositAmount: userData[userDataId][userLength - 1].depositAmount
-                });
-                userData[userDataId].pop();
-
-                // Transfer tokens owed to user.
-                tokenOut.safeTransfer(user, owed);
-
-                // Transfer fee in.
-                address sender = _msgSender();
-                if (msg.value >= userClaim.feePerUser) {
-                    // refund if necessary.
-                    uint256 refund = msg.value - userClaim.feePerUser;
-                    if (refund > 0) payable(sender).transfer(refund);
-                } else {
-                    WRAPPED_NATIVE.safeTransferFrom(sender, address(this), userClaim.feePerUser);
-                }
-
-                return owed;
-            }
+        // Calculate owed amount.
+        uint256 totalTokenDeposited;
+        uint256 totalTokenOut;
+        ERC20 tokenOut;
+        if (userClaim.direction) {
+            totalTokenDeposited = userClaim.token0Amount;
+            totalTokenOut = userClaim.token1Amount;
+            tokenOut = poolToData[pool].token1;
+        } else {
+            totalTokenDeposited = userClaim.token1Amount;
+            totalTokenOut = userClaim.token0Amount;
+            tokenOut = poolToData[pool].token0;
         }
 
-        revert LimitOrderRegistry__UserNotFound(user, userDataId);
+        uint256 owed = (totalTokenOut * depositAmount) / totalTokenDeposited;
+
+        // Transfer tokens owed to user.
+        tokenOut.safeTransfer(user, owed);
+
+        // Transfer fee in.
+        address sender = _msgSender();
+        if (msg.value >= userClaim.feePerUser) {
+            // refund if necessary.
+            uint256 refund = msg.value - userClaim.feePerUser;
+            if (refund > 0) payable(sender).transfer(refund);
+        } else {
+            WRAPPED_NATIVE.safeTransferFrom(sender, address(this), userClaim.feePerUser);
+        }
+
+        return owed;
     }
 
     /**
@@ -460,48 +469,41 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         Order storage order = orderLinkedList[positionId];
         address sender = _msgSender();
         {
-            uint256 userDataId = order.userDataId;
-            uint256 userLength = userData[userDataId].length;
-            for (uint256 i; i < userLength; ++i) {
-                if (userData[userDataId][i].user == sender) {
-                    // Found our user.
-                    uint96 depositAmount = userData[userDataId][i].depositAmount;
-                    uint128 orderAmount;
-                    if (order.direction) {
-                        orderAmount = order.token0Amount;
-                        if (orderAmount == depositAmount) {
-                            liquidityPercentToTake = 1e18;
-                            // Update order tokenAmount.
-                            order.token0Amount = 0;
-                        } else {
-                            liquidityPercentToTake = (1e18 * depositAmount) / orderAmount;
-                            // Update order tokenAmount.
-                            order.token0Amount = orderAmount - depositAmount;
-                        }
-                    } else {
-                        orderAmount = order.token1Amount;
-                        if (orderAmount == depositAmount) {
-                            liquidityPercentToTake = 1e18;
-                            // Update order tokenAmount.
-                            order.token1Amount = 0;
-                        } else {
-                            liquidityPercentToTake = (1e18 * depositAmount) / orderAmount;
-                            // Update order tokenAmount.
-                            order.token1Amount = orderAmount - depositAmount;
-                        }
-                    }
+            uint128 userDataId = order.userDataId;
+            uint128 depositAmount = userDepositAmount[userDataId][sender];
+            if (depositAmount == 0) revert LimitOrderRegistry__UserNotFound(sender, userDataId);
 
-                    // Remove user from array.
-                    userData[userDataId][i] = UserData({
-                        user: userData[userDataId][userLength - 1].user,
-                        depositAmount: userData[userDataId][userLength - 1].depositAmount
-                    });
-                    userData[userDataId].pop();
-                    break;
-                } else if (i == userLength - 1) {
-                    revert LimitOrderRegistry__UserNotFound(sender, userDataId);
+            // Remove one from the userCount.
+            order.userCount--;
+
+            // Zero out user balance.
+            delete userDepositAmount[userDataId][sender];
+
+            uint128 orderAmount;
+            if (order.direction) {
+                orderAmount = order.token0Amount;
+                if (orderAmount == depositAmount) {
+                    liquidityPercentToTake = 1e18;
+                    // Update order tokenAmount.
+                    order.token0Amount = 0;
+                } else {
+                    liquidityPercentToTake = (1e18 * depositAmount) / orderAmount;
+                    // Update order tokenAmount.
+                    order.token0Amount = orderAmount - depositAmount;
+                }
+            } else {
+                orderAmount = order.token1Amount;
+                if (orderAmount == depositAmount) {
+                    liquidityPercentToTake = 1e18;
+                    // Update order tokenAmount.
+                    order.token1Amount = 0;
+                } else {
+                    liquidityPercentToTake = (1e18 * depositAmount) / orderAmount;
+                    // Update order tokenAmount.
+                    order.token1Amount = orderAmount - depositAmount;
                 }
             }
+
             (amount0, amount1) = _takeFromPosition(positionId, pool, liquidityPercentToTake);
             if (liquidityPercentToTake == 1e18) {
                 _removeOrderFromList(positionId, pool, order);
@@ -694,9 +696,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                 Order memory centerTail = orderLinkedList[data.centerTail];
                 if (upper > centerTail.tickUpper) {
                     // New position is closer to the current pool tick, so it becomes new centerTail.
-                    // Make sure current centerTail is OTM.
-                    // TODO below check doesn't really do anything, bc if above if statement is satisfied, then the new order MUST be ITM, which that would have reverted earlier on.
-                    // _revertIfOrderITM(currentTick, centerTail);
                     poolToData[pool].centerTail = positionId;
                 }
                 // else nothing to do.
@@ -710,8 +709,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                 Order memory centerHead = orderLinkedList[data.centerHead];
                 if (lower < centerHead.tickLower) {
                     // New position is closer to the current pool tick, so it becomes new centerHead.
-                    // Make sure current centerHead is OTM.
-                    // _revertIfOrderITM(currentTick, centerHead);
                     poolToData[pool].centerHead = positionId;
                 }
                 // else nothing to do.
@@ -762,8 +759,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     function _updateOrder(
         uint256 positionId,
         address user,
-        uint96 amount
-    ) internal returns (uint96 userTotal) {
+        uint128 amount
+    ) internal returns (uint128 userTotal) {
         Order storage order = orderLinkedList[positionId];
         if (order.direction) {
             // token1
@@ -774,24 +771,12 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         }
 
         // Check if user is already in the order.
-        uint256 dataId = order.userDataId;
-        uint256 userCount = userData[dataId].length;
-        if (userCount == 0) {
-            userData[dataId].push(UserData(user, uint96(amount)));
-        } else {
-            for (uint256 i = 0; i < userCount; ++i) {
-                if (userData[dataId][i].user == user) {
-                    // We found the user, update their existing balance.
-                    userData[dataId][i].depositAmount += amount;
-                    return userData[dataId][i].depositAmount;
-                }
-                if (i == userCount - 1) {
-                    // made it to the end and did not find the user, so add them.
-                    userData[dataId].push(UserData(user, uint96(amount)));
-                    return amount;
-                }
-            }
-        }
+        uint128 userDataId = order.userDataId;
+        uint128 originalDepositAmount = userDepositAmount[userDataId][user];
+        // If this is a new user in the order, add 1 to userCount.
+        if (originalDepositAmount == 0) order.userCount++;
+        userDepositAmount[userDataId][user] = originalDepositAmount + amount;
+        return (originalDepositAmount + amount);
     }
 
     function _mintPosition(
@@ -831,7 +816,11 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         // Zero token id is reserved for NULL values in linked list.
         if (tokenId == 0) revert LimitOrderRegistry__InvalidPositionId();
 
-        // TODO confirm that full aproval is used, and if not the zero it out.
+        // If position manager still has allowance, zero it out.
+        if (direction && data.token0.allowance(address(this), address(POSITION_MANAGER)) > 0)
+            data.token0.safeApprove(address(POSITION_MANAGER), 0);
+        if (!direction && data.token1.allowance(address(this), address(POSITION_MANAGER)) > 0)
+            data.token1.safeApprove(address(POSITION_MANAGER), 0);
 
         return tokenId;
     }
@@ -862,8 +851,12 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
 
         // Increase liquidity in pool.
         POSITION_MANAGER.increaseLiquidity(params);
-        // TODO confirm that full aproval is used, and if not the zero it out.
-        // TODO so it looks like uni will round down by 10 wei or so sometimes, is that worth refunding the user? Probs not they'd spend more on the extra gas.
+
+        // If position manager still has allowance, zero it out.
+        if (direction && data.token0.allowance(address(this), address(POSITION_MANAGER)) > 0)
+            data.token0.safeApprove(address(POSITION_MANAGER), 0);
+        if (!direction && data.token1.allowance(address(this), address(POSITION_MANAGER)) > 0)
+            data.token1.safeApprove(address(POSITION_MANAGER), 0);
     }
 
     function _enforceMinimumLiquidity(uint256 amount, ERC20 asset) internal view {
@@ -899,7 +892,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         uint256 estimatedFee
     ) internal returns (uint128 token0Fees, uint128 token1Fees) {
         // Save fee per user in Claim Struct.
-        uint256 totalUsers = userData[order.userDataId].length;
+        uint256 totalUsers = order.userCount;
         Claim storage newClaim = claim[order.userDataId];
         newClaim.feePerUser = uint128(estimatedFee / totalUsers);
 
@@ -1021,6 +1014,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     /**
      * @notice Helper function to view the top 20 entries in the linked list.
      */
+    //  TODO make this more verbose so FE can use it to show exact state.
     function viewList(UniswapV3Pool pool) public view returns (uint256[10] memory heads, uint256[10] memory tails) {
         uint256 next = poolToData[pool].centerHead;
         for (uint256 i; i < 10; ++i) {
