@@ -99,7 +99,7 @@ contract LimitOrderRegistryTest is Test {
         deal(address(USDC), address(this), 0);
         deal(address(WMATIC), address(this), 300_000 * 30e9);
         WMATIC.approve(address(registry), 300_000 * 30e9);
-        registry.claimOrder(USDC_WETH_05_POOL, 1, address(this));
+        registry.claimOrder(1, address(this));
 
         // Now create an order to sell WETH.
         amount = 1e18;
@@ -133,7 +133,7 @@ contract LimitOrderRegistryTest is Test {
         deal(address(USDC), address(this), 0);
         deal(address(WMATIC), address(this), 300_000 * 30e9);
         WMATIC.approve(address(registry), 300_000 * 30e9);
-        registry.claimOrder(USDC_WETH_05_POOL, 2, address(this));
+        registry.claimOrder(2, address(this));
     }
 
     function testLinkedListCreation() external {
@@ -269,16 +269,16 @@ contract LimitOrderRegistryTest is Test {
         // Claim everything.
         deal(address(WMATIC), address(this), 100e18);
         WMATIC.approve(address(registry), type(uint256).max);
-        registry.claimOrder(USDC_WETH_05_POOL, 1, address(this));
-        registry.claimOrder(USDC_WETH_05_POOL, 2, address(this));
-        registry.claimOrder(USDC_WETH_05_POOL, 3, address(this));
-        registry.claimOrder(USDC_WETH_05_POOL, 4, address(this));
-        registry.claimOrder(USDC_WETH_05_POOL, 5, address(this));
-        registry.claimOrder(USDC_WETH_05_POOL, 6, address(this));
+        registry.claimOrder(1, address(this));
+        registry.claimOrder(2, address(this));
+        registry.claimOrder(3, address(this));
+        registry.claimOrder(4, address(this));
+        registry.claimOrder(5, address(this));
+        registry.claimOrder(6, address(this));
 
         deal(address(this), 1 ether);
         uint256 fee = registry.getFeePerUser(7);
-        registry.claimOrder{ value: 1 ether }(USDC_WETH_05_POOL, 7, address(this));
+        registry.claimOrder{ value: 1 ether }(7, address(this));
 
         assertEq(address(this).balance, 1 ether - fee, "Test contract balance should be original minus fee.");
     }
@@ -325,13 +325,13 @@ contract LimitOrderRegistryTest is Test {
         vm.startPrank(userA);
         deal(address(WMATIC), userA, expectedFeePerUser);
         WMATIC.approve(address(registry), expectedFeePerUser);
-        registry.claimOrder(USDC_WETH_05_POOL, 1, userA);
+        registry.claimOrder(1, userA);
         vm.stopPrank();
 
         vm.startPrank(userB);
         deal(address(WMATIC), userB, expectedFeePerUser);
         WMATIC.approve(address(registry), expectedFeePerUser);
-        registry.claimOrder(USDC_WETH_05_POOL, 1, userB);
+        registry.claimOrder(1, userB);
         vm.stopPrank();
 
         uint256 userAWETH = WETH.balanceOf(userA);
@@ -723,7 +723,7 @@ contract LimitOrderRegistryTest is Test {
     }
 
     function testUpkeepFulfillingOrders() external {
-        (, int24 currentTick, , , , , ) = USDC_WETH_05_POOL.slot0();
+        // (, int24 currentTick, , , , , ) = USDC_WETH_05_POOL.slot0();
         // console.log("Pool Tick", uint24(currentTick));
         uint96 usdcAmount = 1_000e6;
         uint96 wethAmount = 1e18;
@@ -971,6 +971,12 @@ contract LimitOrderRegistryTest is Test {
     // TODO integration test where we reuse orders.
     // TODO test adding and removing users from an order and make sure userCount is updated correctly
     // TODO add a test where two pools with the same token are added(with different fee tiers)
+    // TODO like might need to protect against the following.
+    // User places order
+    // Order is filled
+    // User does not claim
+    // Price reverse making the original order bounds OTM
+    // User calls cancel order. This should revert, then if a new user opens an order using the same BatchOrder, it should still revert!
 
     function _checkList(
         IUniswapV3Pool pool,

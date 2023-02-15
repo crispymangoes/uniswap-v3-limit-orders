@@ -14,11 +14,6 @@ import { Context } from "@openzeppelin/contracts/utils/Context.sol";
 
 import { console } from "@forge-std/Test.sol";
 
-// TODO are struct memory variables passed by reference? and if so can they be used to update a structs state using the = sign?
-// ^^^^ YES they are passed by reference, and you can use that memory struct to change the state of a storage struct.
-// V2 Registry on Polygon 0xE16Df59B887e3Caa439E0b29B42bA2e7976FD8b2
-// V2 Registrar 0x9a811502d843E5a03913d5A2cfb646c11463467A
-// TODO add in a view function, or plan out some way for an external keeper contract to know if a certain account has claimable funds!
 contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holder, Context {
     using SafeTransferLib for ERC20;
 
@@ -26,7 +21,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                              STRUCTS
     //////////////////////////////////////////////////////////////*/
 
-    // Stores the last saved center position of the orderLinkedList based off an input UniV3 pool
+    // Stores the last saved center position of the orderBook based off an input UniV3 pool
     struct PoolData {
         uint256 centerHead;
         uint256 centerTail;
@@ -35,16 +30,21 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         uint24 fee;
     }
 
-    struct Order {
+    struct BatchOrder {
         bool direction; //Determines what direction we are going
         int24 tickUpper;
         int24 tickLower;
         uint64 userCount;
-        uint128 userDataId; // The id where the user data is currently stored
+        uint128 batchId; // The id where the user data is currently stored
         uint128 token0Amount; //Can either be the deposit amount or the amount got out of liquidity changing to the other token
         uint128 token1Amount; //uint128 is already a restriction in base uniswap V3 protocol.
         uint256 head;
         uint256 tail;
+    }
+
+    struct BatchOrderViewData {
+        uint256 id;
+        BatchOrder batchOrder;
     }
 
     struct UserData {
@@ -54,10 +54,12 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
 
     // Using the below struct values and the userData array, we can figure out how much a user is owed.
     struct Claim {
+        UniswapV3Pool pool;
         uint128 token0Amount; //Can either be the deposit amount or the amount got out of liquidity changing to the other token
         uint128 token1Amount;
         uint128 feePerUser; // Fee in terms of network native asset.
         bool direction; //Determines the token out
+        bool isReadyForClaim;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -69,7 +71,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
      */
     mapping(address => uint256) public tokenToSwapFees;
 
-    // How users claim their tokens, just need to pass in the uint120 userDataId
+    // How users claim their tokens, just need to pass in the uint128 batchId
     mapping(uint128 => Claim) public claim;
 
     mapping(UniswapV3Pool => PoolData) public poolToData;
@@ -83,19 +85,21 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     uint16 public maxFillsPerUpkeep = 10;
 
     // Zero is reserved
-    // TODO this could be made bigger to uint176 if need be.
-    uint128 public userDataCount = 1;
+    uint128 public batchCount = 1;
 
-    mapping(uint256 => mapping(address => uint128)) private userDepositAmount;
+    mapping(uint128 => mapping(address => uint128)) private batchIdToUserDepositAmount;
 
     // Orders can be reused to save on NFT space
     // PositionId to Order
-    mapping(uint256 => Order) public orderLinkedList;
+    mapping(uint256 => BatchOrder) public orderBook;
+
+    IKeeperRegistrar public registrar; // Mainnet 0xDb8e8e2ccb5C033938736aa89Fe4fa1eDfD15a1d
+
     /*//////////////////////////////////////////////////////////////
                                  EVENTS
     //////////////////////////////////////////////////////////////*/
 
-    event NewOrder(address user, uint256 userDataId, address pool, uint128 amount, uint128 userTotal);
+    event NewOrder(address user, uint256 batchId, address pool, uint128 amount, uint128 userTotal);
 
     event OrderFilled(uint256 userDataId, address pool);
 
@@ -118,6 +122,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     error LimitOrderRegistry__InvalidTickRange(int24 upper, int24 lower);
     error LimitOrderRegistry__ZeroFeesToWithdraw(address token);
     error LimitOrderRegistry__ZeroNativeBalance();
+    error LimitOrderRegistry__InvalidBatchId();
+    error LimitOrderRegistry__OrderNotReadyToClaim(uint128 batchId);
 
     /*//////////////////////////////////////////////////////////////
                                  ENUMS
@@ -139,24 +145,26 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
 
     LinkTokenInterface public immutable LINK; // Mainnet 0x514910771AF9Ca656af840dff83E8264EcF986CA
 
-    IKeeperRegistrar public immutable REGISTRAR; // Mainnet 0xDb8e8e2ccb5C033938736aa89Fe4fa1eDfD15a1d
-
     constructor(
         address _owner,
         NonfungiblePositionManager _positionManager,
         ERC20 wrappedNative,
         LinkTokenInterface link,
-        IKeeperRegistrar registrar
+        IKeeperRegistrar _registrar
     ) Owned(_owner) {
         POSITION_MANAGER = _positionManager;
         WRAPPED_NATIVE = wrappedNative;
         LINK = link;
-        REGISTRAR = registrar;
+        registrar = _registrar;
     }
 
     /*//////////////////////////////////////////////////////////////
                               OWNER LOGIC
     //////////////////////////////////////////////////////////////*/
+
+    function setRegistrar(IKeeperRegistrar _registrar) external onlyOwner {
+        registrar = _registrar;
+    }
 
     function setMaxFillsPerUpkeep(uint16 newVal) external onlyOwner {
         maxFillsPerUpkeep = newVal;
@@ -171,7 +179,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             // Owner wants to automatically create an upkeep for new pool.
             // SafeTransferLib.safeTransferFrom(ERC20(address(LINK)), owner, address(this), initialUpkeepFunds);
             ERC20(address(LINK)).safeTransferFrom(owner, address(this), initialUpkeepFunds);
-            ERC20(address(LINK)).safeApprove(address(REGISTRAR), initialUpkeepFunds);
+            ERC20(address(LINK)).safeApprove(address(registrar), initialUpkeepFunds);
             RegistrationParams memory params = RegistrationParams({
                 name: "Limit Order Registry",
                 encryptedEmail: abi.encode(0),
@@ -182,7 +190,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                 offchainConfig: abi.encode(0),
                 amount: uint96(initialUpkeepFunds)
             });
-            REGISTRAR.registerUpkeep(params);
+            registrar.registerUpkeep(params);
         }
 
         // poolToData
@@ -232,6 +240,9 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                         USER ORDER MANAGEMENT LOGIC
     //////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Struct used to store variables needed during order creation.
+     */
     struct OrderDetails {
         int24 tick;
         int24 upper;
@@ -323,11 +334,11 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             // Add it to the list.
             _addPositionToList(data, startingNode, targetTick, details.positionId);
             // Set new orders upper and lower tick.
-            orderLinkedList[details.positionId].tickLower = details.lower;
-            orderLinkedList[details.positionId].tickUpper = details.upper;
+            orderBook[details.positionId].tickLower = details.lower;
+            orderBook[details.positionId].tickUpper = details.upper;
             //  create a new userDataId, direction.
             _setupOrder(direction, details.positionId);
-            // update token0Amount, token1Amount, userDepositAmount mapping.
+            // update token0Amount, token1Amount, batchIdToUserDepositAmount mapping.
             details.userTotal = _updateOrder(details.positionId, sender, amount);
 
             _updateCenter(pool, details.positionId, details.tick, details.upper, details.lower);
@@ -336,13 +347,13 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             getPositionFromTicks[details.lower][details.upper] = details.positionId;
         } else {
             // Check if the position id is already being used in List.
-            Order memory order = orderLinkedList[details.positionId];
+            BatchOrder memory order = orderBook[details.positionId];
             if (order.token0Amount > 0 || order.token1Amount > 0) {
                 // Order is already in the linked list, ignore proposed spot.
                 // Need to add liquidity,
                 PoolData memory data = poolToData[pool];
                 _addToPosition(data, details.positionId, details.amount0, details.amount1, direction);
-                // update token0Amount, token1Amount, userDepositAmount mapping.
+                // update token0Amount, token1Amount, batchIdToUserDepositAmount mapping.
                 details.userTotal = _updateOrder(details.positionId, sender, amount);
             } else {
                 // We already have this order.
@@ -355,36 +366,32 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
 
                 // Need to add liquidity,
                 _addToPosition(data, details.positionId, details.amount0, details.amount1, direction);
-                // update token0Amount, token1Amount, userDepositAmount mapping.
+                // update token0Amount, token1Amount, batchIdToUserDepositAmount mapping.
                 details.userTotal = _updateOrder(details.positionId, sender, amount);
 
                 _updateCenter(pool, details.positionId, details.tick, details.upper, details.lower);
             }
         }
-        uint128 userDataId = orderLinkedList[details.positionId].userDataId;
-        emit NewOrder(sender, userDataId, address(pool), amount, details.userTotal);
-        return userDataId;
+        uint128 batchId = orderBook[details.positionId].batchId;
+        emit NewOrder(sender, batchId, address(pool), amount, details.userTotal);
+        return batchId;
     }
 
     /**
      * @notice Users can claim fulfilled orders by passing in the `userDataId` corresponding to the order they want to claim.
-     * @param pool the Uniswap V3 pool to create a limit order on.
-     * @param userDataId the userDataId corresponding to a fulfilled order to claim
+     * @param batchId the userDataId corresponding to a fulfilled order to claim
      * @param user the address of the user in the order to claim for
      * @dev Caller must either approve this contract to spend their Wrapped Native token, and have at least `getFeePerUser` tokens in their wallet.
      *      Or caller must send `getFeePerUser` value with this call.
      */
-    function claimOrder(
-        UniswapV3Pool pool,
-        uint128 userDataId,
-        address user
-    ) external payable returns (uint256) {
-        Claim storage userClaim = claim[userDataId];
-        uint256 depositAmount = userDepositAmount[userDataId][user];
-        if (depositAmount == 0) revert LimitOrderRegistry__UserNotFound(user, userDataId);
+    function claimOrder(uint128 batchId, address user) external payable returns (uint256) {
+        Claim storage userClaim = claim[batchId];
+        if (!userClaim.isReadyForClaim) revert LimitOrderRegistry__OrderNotReadyToClaim(batchId);
+        uint256 depositAmount = batchIdToUserDepositAmount[batchId][user];
+        if (depositAmount == 0) revert LimitOrderRegistry__UserNotFound(user, batchId);
 
         // Zero out user balance.
-        delete userDepositAmount[userDataId][user];
+        delete batchIdToUserDepositAmount[batchId][user];
 
         // Calculate owed amount.
         uint256 totalTokenDeposited;
@@ -393,11 +400,11 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         if (userClaim.direction) {
             totalTokenDeposited = userClaim.token0Amount;
             totalTokenOut = userClaim.token1Amount;
-            tokenOut = poolToData[pool].token1;
+            tokenOut = poolToData[userClaim.pool].token1;
         } else {
             totalTokenDeposited = userClaim.token1Amount;
             totalTokenOut = userClaim.token0Amount;
-            tokenOut = poolToData[pool].token0;
+            tokenOut = poolToData[userClaim.pool].token0;
         }
 
         uint256 owed = (totalTokenOut * depositAmount) / totalTokenDeposited;
@@ -429,7 +436,14 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         UniswapV3Pool pool,
         int24 targetTick,
         bool direction
-    ) external returns (uint128 amount0, uint128 amount1) {
+    )
+        external
+        returns (
+            uint128 amount0,
+            uint128 amount1,
+            uint128 batchId
+        )
+    {
         uint256 positionId;
         {
             // Make sure order is OTM.
@@ -466,18 +480,19 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         uint256 liquidityPercentToTake;
 
         // Get the users deposit amount in the order.
-        Order storage order = orderLinkedList[positionId];
+        BatchOrder storage order = orderBook[positionId];
+        if (order.batchId == 0) revert LimitOrderRegistry__InvalidBatchId();
         address sender = _msgSender();
         {
-            uint128 userDataId = order.userDataId;
-            uint128 depositAmount = userDepositAmount[userDataId][sender];
-            if (depositAmount == 0) revert LimitOrderRegistry__UserNotFound(sender, userDataId);
+            batchId = order.batchId;
+            uint128 depositAmount = batchIdToUserDepositAmount[batchId][sender];
+            if (depositAmount == 0) revert LimitOrderRegistry__UserNotFound(sender, batchId);
 
             // Remove one from the userCount.
             order.userCount--;
 
             // Zero out user balance.
-            delete userDepositAmount[userDataId][sender];
+            delete batchIdToUserDepositAmount[batchId][sender];
 
             uint128 orderAmount;
             if (order.direction) {
@@ -533,13 +548,13 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         UniswapV3Pool pool = abi.decode(checkData, (UniswapV3Pool));
         (, int24 currentTick, , , , , ) = pool.slot0();
         PoolData memory data = poolToData[pool];
-        Order memory order;
+        BatchOrder memory order;
         OrderStatus status;
         bool walkDirection;
 
         if (data.centerHead != 0) {
             // centerHead is set, check if it is ITM.
-            order = orderLinkedList[data.centerHead];
+            order = orderBook[data.centerHead];
             status = _getOrderStatus(currentTick, order.tickLower, order.tickUpper, order.direction);
             if (status == OrderStatus.ITM) {
                 walkDirection = true; // Walk towards head of list.
@@ -551,7 +566,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         if (data.centerTail != 0) {
             // If walk direction has not been set, then we know, no head orders are ITM.
             // So check tail orders.
-            order = orderLinkedList[data.centerTail];
+            order = orderBook[data.centerTail];
             status = _getOrderStatus(currentTick, order.tickLower, order.tickUpper, order.direction);
             if (status == OrderStatus.ITM) {
                 walkDirection = false; // Walk towards tail of list.
@@ -563,6 +578,10 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         return (false, abi.encode(0));
     }
 
+    /**
+     * @dev Does not use _removeOrderFromList, so that the center head/tail
+     *      value is not updated every single time and order is fulfilled, instead we just update it once at the end.
+     */
     function performUpkeep(bytes calldata performData) external {
         (UniswapV3Pool pool, bool walkDirection) = abi.decode(performData, (UniswapV3Pool, bool));
 
@@ -582,18 +601,23 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         uint256 target = walkDirection ? data.centerHead : data.centerTail;
         for (uint256 i; i < maxFillsPerUpkeep; ++i) {
             if (target == 0) break;
-            Order storage order = orderLinkedList[target];
+            BatchOrder storage order = orderBook[target];
             OrderStatus status = _getOrderStatus(currentTick, order.tickLower, order.tickUpper, order.direction);
             if (status == OrderStatus.ITM) {
                 (uint128 token0Fees, uint128 token1Fees) = _fulfillOrder(target, pool, order, estimatedFee);
                 totalToken0Fees += token0Fees;
                 totalToken1Fees += token1Fees;
                 target = walkDirection ? order.head : order.tail;
-                // Zero out orders head and tail values.
+                // Zero out orders head and tail values removing order from the list.
                 order.head = 0;
                 order.tail = 0;
+                // Update bool to indicate batch order is ready to handle claims.
+                claim[order.batchId].isReadyForClaim = true;
+                // Zero out orders batch id.
+                order.batchId = 0;
+                // TODO above was just added to help revert when trying to cancel a fulfilled order, that is now OTM.
                 orderFilled = true;
-                emit OrderFilled(order.userDataId, address(pool));
+                emit OrderFilled(order.batchId, address(pool));
             } else break;
         }
 
@@ -607,13 +631,13 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         if (walkDirection) {
             data.centerHead = target;
             // Need to reconnect list.
-            orderLinkedList[data.centerTail].head = target;
-            if (target != 0) orderLinkedList[target].tail = data.centerTail;
+            orderBook[data.centerTail].head = target;
+            if (target != 0) orderBook[target].tail = data.centerTail;
         } else {
             data.centerTail = target;
             // Need to reconnect list.
-            orderLinkedList[data.centerHead].tail = target;
-            if (target != 0) orderLinkedList[target].head = data.centerHead;
+            orderBook[data.centerHead].tail = target;
+            if (target != 0) orderBook[target].head = data.centerHead;
         }
     }
 
@@ -626,17 +650,17 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         uint256 startingNode,
         int24 targetTick
     ) internal view returns (uint256 proposedHead, uint256 proposedTail) {
-        Order memory node;
+        BatchOrder memory node;
         if (startingNode == 0) {
             if (data.centerHead != 0) {
                 startingNode = data.centerHead;
-                node = orderLinkedList[startingNode];
+                node = orderBook[startingNode];
             } else if (data.centerTail != 0) {
                 startingNode = data.centerTail;
-                node = orderLinkedList[startingNode];
+                node = orderBook[startingNode];
             } else return (0, 0);
         } else {
-            node = orderLinkedList[startingNode];
+            node = orderBook[startingNode];
             _checkThatNodeIsInList(startingNode, node, data);
         }
         uint256 nodeId = startingNode;
@@ -651,7 +675,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                     return (0, nodeId);
                 } else {
                     nodeId = node.head;
-                    node = orderLinkedList[nodeId];
+                    node = orderBook[nodeId];
                 }
             } else {
                 // Go until we find tick upper that is LESS than or equal to targetTick
@@ -662,7 +686,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                     return (nodeId, 0);
                 } else {
                     nodeId = node.tail;
-                    node = orderLinkedList[nodeId];
+                    node = orderBook[nodeId];
                 }
             }
         }
@@ -693,7 +717,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                 // Currently no centerTail, so this order must become it.
                 poolToData[pool].centerTail = positionId;
             } else {
-                Order memory centerTail = orderLinkedList[data.centerTail];
+                BatchOrder memory centerTail = orderBook[data.centerTail];
                 if (upper > centerTail.tickUpper) {
                     // New position is closer to the current pool tick, so it becomes new centerTail.
                     poolToData[pool].centerTail = positionId;
@@ -706,7 +730,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                 // Currently no centerHead, so this order must become it.
                 poolToData[pool].centerHead = positionId;
             } else {
-                Order memory centerHead = orderLinkedList[data.centerHead];
+                BatchOrder memory centerHead = orderBook[data.centerHead];
                 if (lower < centerHead.tickLower) {
                     // New position is closer to the current pool tick, so it becomes new centerHead.
                     poolToData[pool].centerHead = positionId;
@@ -716,14 +740,14 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         }
     }
 
-    function _revertIfOrderITM(int24 currentTick, Order memory order) internal pure {
+    function _revertIfOrderITM(int24 currentTick, BatchOrder memory order) internal pure {
         OrderStatus status = _getOrderStatus(currentTick, order.tickLower, order.tickUpper, order.direction);
         if (status == OrderStatus.ITM) revert LimitOrderRegistry__CenterITM();
     }
 
     function _checkThatNodeIsInList(
         uint256 node,
-        Order memory order,
+        BatchOrder memory order,
         PoolData memory data
     ) internal pure {
         if (order.head == 0 && order.tail == 0) {
@@ -740,20 +764,20 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     ) internal {
         (uint256 head, uint256 tail) = _findSpot(data, startingNode, targetTick);
         if (tail != 0) {
-            orderLinkedList[tail].head = position;
-            orderLinkedList[position].tail = tail;
+            orderBook[tail].head = position;
+            orderBook[position].tail = tail;
         }
         if (head != 0) {
-            orderLinkedList[head].tail = position;
-            orderLinkedList[position].head = head;
+            orderBook[head].tail = position;
+            orderBook[position].head = head;
         }
     }
 
     function _setupOrder(bool direction, uint256 position) internal {
-        Order storage order = orderLinkedList[position];
-        order.userDataId = userDataCount;
+        BatchOrder storage order = orderBook[position];
+        order.batchId = batchCount;
         order.direction = direction;
-        userDataCount++;
+        batchCount++;
     }
 
     function _updateOrder(
@@ -761,7 +785,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         address user,
         uint128 amount
     ) internal returns (uint128 userTotal) {
-        Order storage order = orderLinkedList[positionId];
+        BatchOrder storage order = orderBook[positionId];
         if (order.direction) {
             // token1
             order.token0Amount += amount;
@@ -771,11 +795,11 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         }
 
         // Check if user is already in the order.
-        uint128 userDataId = order.userDataId;
-        uint128 originalDepositAmount = userDepositAmount[userDataId][user];
+        uint128 userDataId = order.batchId;
+        uint128 originalDepositAmount = batchIdToUserDepositAmount[userDataId][user];
         // If this is a new user in the order, add 1 to userCount.
         if (originalDepositAmount == 0) order.userCount++;
-        userDepositAmount[userDataId][user] = originalDepositAmount + amount;
+        batchIdToUserDepositAmount[userDataId][user] = originalDepositAmount + amount;
         return (originalDepositAmount + amount);
     }
 
@@ -888,13 +912,14 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     function _fulfillOrder(
         uint256 target,
         UniswapV3Pool pool,
-        Order storage order,
+        BatchOrder storage order,
         uint256 estimatedFee
     ) internal returns (uint128 token0Fees, uint128 token1Fees) {
         // Save fee per user in Claim Struct.
         uint256 totalUsers = order.userCount;
-        Claim storage newClaim = claim[order.userDataId];
+        Claim storage newClaim = claim[order.batchId];
         newClaim.feePerUser = uint128(estimatedFee / totalUsers);
+        newClaim.pool = pool;
 
         // Take all liquidity from the order.
         (uint128 amount0, uint128 amount1) = _takeFromPosition(target, pool, 1e18);
@@ -986,23 +1011,23 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     function _removeOrderFromList(
         uint256 target,
         UniswapV3Pool pool,
-        Order storage order
+        BatchOrder storage order
     ) internal {
         // Checks if order is the center, if so then it will set it to the the center orders head(which is okay if it is zero).
         uint256 centerHead = poolToData[pool].centerHead;
         uint256 centerTail = poolToData[pool].centerTail;
 
         if (target == centerHead) {
-            uint256 newHead = orderLinkedList[centerHead].head;
+            uint256 newHead = orderBook[centerHead].head;
             poolToData[pool].centerHead = newHead;
         } else if (target == centerTail) {
-            uint256 newTail = orderLinkedList[centerTail].tail;
+            uint256 newTail = orderBook[centerTail].tail;
             poolToData[pool].centerTail = newTail;
         }
 
         // Remove order from linked list.
-        orderLinkedList[order.tail].head = order.head;
-        orderLinkedList[order.head].tail = order.tail;
+        orderBook[order.tail].head = order.head;
+        orderBook[order.head].tail = order.tail;
         order.head = 0;
         order.tail = 0;
     }
@@ -1019,7 +1044,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         uint256 next = poolToData[pool].centerHead;
         for (uint256 i; i < 10; ++i) {
             if (next == 0) break;
-            Order memory target = orderLinkedList[next];
+            BatchOrder memory target = orderBook[next];
             heads[i] = next;
             next = target.head;
         }
@@ -1027,9 +1052,40 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         next = poolToData[pool].centerTail;
         for (uint256 i; i < 10; ++i) {
             if (next == 0) break;
-            Order memory target = orderLinkedList[next];
+            BatchOrder memory target = orderBook[next];
             tails[i] = next;
             next = target.tail;
+        }
+    }
+
+    function walkOrders(
+        UniswapV3Pool pool,
+        uint256 startingNode,
+        uint256 returnCount,
+        bool direction
+    ) external view returns (BatchOrderViewData[] memory orders) {
+        orders = new BatchOrderViewData[](returnCount);
+        PoolData memory data = poolToData[pool];
+        if (direction) {
+            // Walk toward head.
+            uint256 targetId = startingNode == 0 ? data.centerHead : startingNode;
+            BatchOrder memory target = orderBook[targetId];
+            for (uint256 i; i < returnCount; ++i) {
+                orders[i] = BatchOrderViewData({ id: targetId, batchOrder: target });
+                targetId = target.head;
+                if (targetId != 0) target = orderBook[targetId];
+                else break;
+            }
+        } else {
+            // Walk toward tail.
+            uint256 targetId = startingNode == 0 ? data.centerTail : startingNode;
+            BatchOrder memory target = orderBook[targetId];
+            for (uint256 i; i < returnCount; ++i) {
+                orders[i] = BatchOrderViewData({ id: targetId, batchOrder: target });
+                targetId = target.tail;
+                if (targetId != 0) target = orderBook[targetId];
+                else break;
+            }
         }
     }
 
@@ -1059,8 +1115,12 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     /**
      * @notice Helper function to get the fee per user for a specific order.
      */
-    function getFeePerUser(uint128 userDataId) external view returns (uint128) {
-        return claim[userDataId].feePerUser;
+    function getFeePerUser(uint128 batchId) external view returns (uint128) {
+        return claim[batchId].feePerUser;
+    }
+
+    function isOrderReadyForClaim(uint128 batchId) external view returns (bool) {
+        return claim[batchId].isReadyForClaim;
     }
 
     /**
@@ -1084,7 +1144,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
 
             // Check if the upper node is in the list.
             if (upperNode != 0) {
-                Order memory order = orderLinkedList[upperNode];
+                BatchOrder memory order = orderBook[upperNode];
                 if (
                     order.head != 0 || order.tail != 0 || data.centerHead != upperNode || data.centerTail != upperNode
                 ) {
@@ -1094,7 +1154,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             }
 
             if (lowerNode != 0) {
-                Order memory order = orderLinkedList[lowerNode];
+                BatchOrder memory order = orderBook[lowerNode];
                 if (
                     order.head != 0 || order.tail != 0 || data.centerHead != lowerNode || data.centerTail != lowerNode
                 ) {
