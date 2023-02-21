@@ -39,7 +39,7 @@ contract TradeManager is Initializable, AutomationCompatibleInterface, Owned {
         limitOrderRegistry = _limitOrderRegistry;
 
         // Create new upkeep
-        ERC20(address(LINK)).safeTransferFrom(user, address(this), initialUpkeepFunds);
+        ERC20(address(LINK)).safeTransferFrom(msg.sender, address(this), initialUpkeepFunds);
         ERC20(address(LINK)).safeApprove(address(registrar), initialUpkeepFunds);
         RegistrationParams memory params = RegistrationParams({
             name: "Trade Manager",
@@ -67,8 +67,8 @@ contract TradeManager is Initializable, AutomationCompatibleInterface, Owned {
         if (managerBalance < amount) assetIn.safeTransferFrom(msg.sender, address(this), amount - managerBalance);
 
         assetIn.safeApprove(address(limitOrderRegistry), amount);
-        uint128 userDataId = limitOrderRegistry.newOrder(pool, targetTick, amount, direction, startingNode);
-        ownerOrders.add(userDataId);
+        uint128 batchId = limitOrderRegistry.newOrder(pool, targetTick, amount, direction, startingNode);
+        ownerOrders.add(batchId);
     }
 
     function cancelOrder(
@@ -76,7 +76,7 @@ contract TradeManager is Initializable, AutomationCompatibleInterface, Owned {
         int24 targetTick,
         bool direction
     ) external onlyOwner {
-        (uint128 amount0, uint128 amount1, uint128 userDataId) = limitOrderRegistry.cancelOrder(
+        (uint128 amount0, uint128 amount1, uint128 batchId) = limitOrderRegistry.cancelOrder(
             pool,
             targetTick,
             direction
@@ -84,14 +84,14 @@ contract TradeManager is Initializable, AutomationCompatibleInterface, Owned {
         if (amount0 > 0) ERC20(pool.token0()).safeTransfer(owner, amount0);
         if (amount1 > 0) ERC20(pool.token1()).safeTransfer(owner, amount1);
 
-        ownerOrders.remove(userDataId);
+        ownerOrders.remove(batchId);
     }
 
-    function claimOrder(uint128 userDataId, address user) external onlyOwner {
-        uint256 value = limitOrderRegistry.getFeePerUser(userDataId);
-        limitOrderRegistry.claimOrder{ value: value }(userDataId, user);
+    function claimOrder(uint128 batchId) external onlyOwner {
+        uint256 value = limitOrderRegistry.getFeePerUser(batchId);
+        limitOrderRegistry.claimOrder{ value: value }(batchId, address(this));
 
-        ownerOrders.remove(userDataId);
+        ownerOrders.remove(batchId);
     }
 
     function withdrawNative(uint256 amount) external onlyOwner {
@@ -145,7 +145,11 @@ contract TradeManager is Initializable, AutomationCompatibleInterface, Owned {
     function performUpkeep(bytes calldata performData) external {
         // Accept claim array and claim all orders
         ClaimInfo[MAX_CLAIMS] memory claimInfo = abi.decode(performData, (ClaimInfo[10]));
-        for (uint256 i; i < 10; ++i)
-            limitOrderRegistry.claimOrder{ value: claimInfo[i].fee }(claimInfo[i].batchId, address(this));
+        for (uint256 i; i < 10; ++i) {
+            if (limitOrderRegistry.isOrderReadyForClaim(claimInfo[i].batchId)) {
+                limitOrderRegistry.claimOrder{ value: claimInfo[i].fee }(claimInfo[i].batchId, address(this));
+                ownerOrders.remove(claimInfo[i].batchId);
+            }
+        }
     }
 }

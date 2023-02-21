@@ -31,15 +31,15 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     }
 
     struct BatchOrder {
-        bool direction; //Determines what direction we are going
-        int24 tickUpper;
-        int24 tickLower;
-        uint64 userCount;
+        bool direction; //Determines what direction we are going, set when minting a new position or adding an exiting position to the order book
+        int24 tickUpper; // Set when the LP position is minted for the first time
+        int24 tickLower; // Set when the LP position is minted for the first time
+        uint64 userCount; // Reset on fulfillments, decremented on cancel, incremented on new user entering order
         uint128 batchId; // The id where the user data is currently stored
-        uint128 token0Amount; //Can either be the deposit amount or the amount got out of liquidity changing to the other token
-        uint128 token1Amount; //uint128 is already a restriction in base uniswap V3 protocol.
-        uint256 head;
-        uint256 tail;
+        uint128 token0Amount; // Updated in _updateOrder, cancelOrder, zeroed out on order fulfillment
+        uint128 token1Amount; // Updated in _updateOrder, cancelOrder, zeroed out on order fulfillment
+        uint256 head; // updated on order fulfillment, and in _removeOrderFromList, and during _addPositionToList
+        uint256 tail; // updated on order fulfillment, and in _removeOrderFromList, and during _addPositionToList
     }
 
     struct BatchOrderViewData {
@@ -94,14 +94,33 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     mapping(uint256 => BatchOrder) public orderBook;
 
     IKeeperRegistrar public registrar; // Mainnet 0xDb8e8e2ccb5C033938736aa89Fe4fa1eDfD15a1d
+    /**
+     * @notice Whether or not the contract is shutdown in case of an emergency.
+     */
+    bool public isShutdown;
+
+    /*//////////////////////////////////////////////////////////////
+                                 MODIFIERS
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Prevent a function from being called during a shutdown.
+     */
+    modifier whenNotShutdown() {
+        if (isShutdown) revert LimitOrderRegistry__ContractShutdown();
+
+        _;
+    }
 
     /*//////////////////////////////////////////////////////////////
                                  EVENTS
     //////////////////////////////////////////////////////////////*/
 
-    event NewOrder(address user, uint256 batchId, address pool, uint128 amount, uint128 userTotal);
-
-    event OrderFilled(uint256 userDataId, address pool);
+    event NewOrder(address user, address pool, uint128 amount, uint128 userTotal, BatchOrder effectedOrder);
+    event ClaimOrder(address user, uint128 batchId, uint256 amount);
+    event CancelOrder(address user, uint128 amount0, uint128 amount1, BatchOrder effectedOrder);
+    event OrderFilled(uint256 batchId, address pool);
+    event ShutdownChanged(bool isShutdown);
 
     /*//////////////////////////////////////////////////////////////
                                  ERRORS
@@ -111,7 +130,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     error LimitOrderRegistry__PoolAlreadySetup(address pool);
     error LimitOrderRegistry__PoolNotSetup(address pool);
     error LimitOrderRegistry__InvalidTargetTick(int24 targetTick, int24 tickSpacing);
-    error LimitOrderRegistry__UserNotFound(address user, uint256 userDataId);
+    error LimitOrderRegistry__UserNotFound(address user, uint256 batchId);
     error LimitOrderRegistry__InvalidPositionId();
     error LimitOrderRegistry__NoLiquidityInOrder();
     error LimitOrderRegistry__NoOrdersToFulfill();
@@ -124,6 +143,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     error LimitOrderRegistry__ZeroNativeBalance();
     error LimitOrderRegistry__InvalidBatchId();
     error LimitOrderRegistry__OrderNotReadyToClaim(uint128 batchId);
+    error LimitOrderRegistry__ContractShutdown();
+    error LimitOrderRegistry__ContractNotShutdown();
 
     /*//////////////////////////////////////////////////////////////
                                  ENUMS
@@ -236,6 +257,26 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         payable(owner).transfer(address(this).balance);
     }
 
+    /**
+     * @notice Shutdown the cellar. Used in an emergency or if the cellar has been deprecated.
+     * @dev In the case where
+     */
+    function initiateShutdown() external whenNotShutdown onlyOwner {
+        isShutdown = true;
+
+        emit ShutdownChanged(true);
+    }
+
+    /**
+     * @notice Restart the cellar.
+     */
+    function liftShutdown() external onlyOwner {
+        if (!isShutdown) revert LimitOrderRegistry__ContractNotShutdown();
+        isShutdown = false;
+
+        emit ShutdownChanged(false);
+    }
+
     /*//////////////////////////////////////////////////////////////
                         USER ORDER MANAGEMENT LOGIC
     //////////////////////////////////////////////////////////////*/
@@ -271,7 +312,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
      *      - the new order does not meet minimum liquidity requirements
      *      - transferFrom fails
 
-     * @dev Emits a `NewOrder` event which contains meta data about the order including the orders `userDataId`(which is used for claiming/cancelling).
+     * @dev Emits a `NewOrder` event which contains meta data about the order including the orders `batchId`(which is used for claiming/cancelling).
      */
     function newOrder(
         UniswapV3Pool pool,
@@ -279,7 +320,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         uint128 amount,
         bool direction,
         uint256 startingNode
-    ) external returns (uint128) {
+    ) external whenNotShutdown returns (uint128) {
         if (address(poolToData[pool].token0) == address(0)) revert LimitOrderRegistry__PoolNotSetup(address(pool));
 
         OrderDetails memory details;
@@ -336,7 +377,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             // Set new orders upper and lower tick.
             orderBook[details.positionId].tickLower = details.lower;
             orderBook[details.positionId].tickUpper = details.upper;
-            //  create a new userDataId, direction.
+            //  create a new batchId, direction.
             _setupOrder(direction, details.positionId);
             // update token0Amount, token1Amount, batchIdToUserDepositAmount mapping.
             details.userTotal = _updateOrder(details.positionId, sender, amount);
@@ -361,7 +402,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
 
                 // Add it to the list.
                 _addPositionToList(data, startingNode, targetTick, details.positionId);
-                //  create a new userDataId, direction.
+                //  create a new batchId, direction.
                 _setupOrder(direction, details.positionId);
 
                 // Need to add liquidity,
@@ -373,13 +414,13 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             }
         }
         uint128 batchId = orderBook[details.positionId].batchId;
-        emit NewOrder(sender, batchId, address(pool), amount, details.userTotal);
+        emit NewOrder(sender, address(pool), amount, details.userTotal, orderBook[details.positionId]);
         return batchId;
     }
 
     /**
-     * @notice Users can claim fulfilled orders by passing in the `userDataId` corresponding to the order they want to claim.
-     * @param batchId the userDataId corresponding to a fulfilled order to claim
+     * @notice Users can claim fulfilled orders by passing in the `batchId` corresponding to the order they want to claim.
+     * @param batchId the batchId corresponding to a fulfilled order to claim
      * @param user the address of the user in the order to claim for
      * @dev Caller must either approve this contract to spend their Wrapped Native token, and have at least `getFeePerUser` tokens in their wallet.
      *      Or caller must send `getFeePerUser` value with this call.
@@ -421,7 +462,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         } else {
             WRAPPED_NATIVE.safeTransferFrom(sender, address(this), userClaim.feePerUser);
         }
-
+        emit ClaimOrder(user, batchId, owed);
         return owed;
     }
 
@@ -525,6 +566,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                 // Zero out balances for cancelled order.
                 order.token0Amount = 0;
                 order.token1Amount = 0;
+                // TODO added below like I did for perform upkeep.
+                order.batchId = 0;
             }
         }
         if (order.direction) {
@@ -538,6 +581,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             // Save any swap fees.
             if (amount0 > 0) tokenToSwapFees[address(poolToData[pool].token0)] += amount0;
         }
+        emit CancelOrder(sender, amount0, amount1, order);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -615,6 +659,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                 claim[order.batchId].isReadyForClaim = true;
                 // Zero out orders batch id.
                 order.batchId = 0;
+                // Reset user count.
+                order.userCount = 0;
                 // TODO above was just added to help revert when trying to cancel a fulfilled order, that is now OTM.
                 orderFilled = true;
                 emit OrderFilled(order.batchId, address(pool));
@@ -795,11 +841,11 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         }
 
         // Check if user is already in the order.
-        uint128 userDataId = order.batchId;
-        uint128 originalDepositAmount = batchIdToUserDepositAmount[userDataId][user];
+        uint128 batchId = order.batchId;
+        uint128 originalDepositAmount = batchIdToUserDepositAmount[batchId][user];
         // If this is a new user in the order, add 1 to userCount.
         if (originalDepositAmount == 0) order.userCount++;
-        batchIdToUserDepositAmount[userDataId][user] = originalDepositAmount + amount;
+        batchIdToUserDepositAmount[batchId][user] = originalDepositAmount + amount;
         return (originalDepositAmount + amount);
     }
 

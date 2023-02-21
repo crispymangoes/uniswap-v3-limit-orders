@@ -536,16 +536,34 @@ contract LimitOrderRegistryTest is Test {
         _createOrder(userB, USDC_WETH_05_POOL, -80, WETH, wethAmount);
         vm.stopPrank();
 
+        uint64 userCount;
+        (, , , userCount, , , , , ) = registry.orderBook(id0);
+        assertEq(userCount, 1, "Should be one user in the order.");
+        (, , , userCount, , , , , ) = registry.orderBook(id1);
+        assertEq(userCount, 2, "Should be two users in the order.");
+        (, , , userCount, , , , , ) = registry.orderBook(id2);
+        assertEq(userCount, 1, "Should be one user in the order.");
+        (, , , userCount, , , , , ) = registry.orderBook(id3);
+        assertEq(userCount, 1, "Should be one user in the order.");
+        (, , , userCount, , , , , ) = registry.orderBook(id4);
+        assertEq(userCount, 1, "Should be one user in the order.");
+        (, , , userCount, , , , , ) = registry.orderBook(id5);
+        assertEq(userCount, 1, "Should be one user in the order.");
+
         // Cancelling orders with multiple people in them.
         // User B leaves 40 tick delta order.
         vm.prank(userB);
         registry.cancelOrder(USDC_WETH_05_POOL, poolTick + 40, true);
+        (, , , userCount, , , , , ) = registry.orderBook(id1);
+        assertEq(userCount, 1, "Should be one user in the order.");
         // Order should still be in Linked List.
         _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
 
         // Cancelling orders that are between two orders.
         vm.prank(userA);
         registry.cancelOrder(USDC_WETH_05_POOL, poolTick + 40, true);
+        (, , , userCount, , , , , ) = registry.orderBook(id1);
+        assertEq(userCount, 0, "Should be zero user in the order.");
 
         // Should have removed id1 from list.
         expectedHeads[1] = id2;
@@ -554,6 +572,8 @@ contract LimitOrderRegistryTest is Test {
 
         vm.prank(userB);
         registry.cancelOrder(USDC_WETH_05_POOL, poolTick - 40, false);
+        (, , , userCount, , , , , ) = registry.orderBook(id4);
+        assertEq(userCount, 0, "Should be zero user in the order.");
         expectedTails[1] = id5;
         expectedTails[2] = 0;
         _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
@@ -566,11 +586,15 @@ contract LimitOrderRegistryTest is Test {
         // Cancelling orders that are leafs.
         vm.prank(userA);
         registry.cancelOrder(USDC_WETH_05_POOL, poolTick + 80, true);
+        (, , , userCount, , , , , ) = registry.orderBook(id2);
+        assertEq(userCount, 0, "Should be zero user in the order.");
         expectedHeads[1] = 0;
         _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
 
         vm.prank(userB);
         registry.cancelOrder(USDC_WETH_05_POOL, poolTick - 80, false);
+        (, , , userCount, , , , , ) = registry.orderBook(id5);
+        assertEq(userCount, 0, "Should be zero user in the order.");
         expectedTails[1] = 0;
         _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
 
@@ -598,6 +622,8 @@ contract LimitOrderRegistryTest is Test {
         deal(address(USDC), userA, 0);
         vm.prank(userA);
         registry.cancelOrder(USDC_WETH_05_POOL, poolTick + 20, true);
+        (, , , userCount, , , , , ) = registry.orderBook(id0);
+        assertEq(userCount, 0, "Should be zero user in the order.");
         assertGt(USDC.balanceOf(userA), usdcAmount, "User A should have received some swap fees.");
         expectedHeads[0] = 0;
         _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
@@ -605,6 +631,8 @@ contract LimitOrderRegistryTest is Test {
         // Cancelling orders that are the center.
         vm.prank(userB);
         registry.cancelOrder(USDC_WETH_05_POOL, poolTick - 20, false);
+        (, , , userCount, , , , , ) = registry.orderBook(id3);
+        assertEq(userCount, 0, "Should be zero user in the order.");
         expectedTails[0] = 0;
         _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
     }
@@ -967,16 +995,21 @@ contract LimitOrderRegistryTest is Test {
         _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
     }
 
-    // TODO add test where user overpays value.
+    function testIntergration() external {
+        // Create two pools for the same token pair but with different swap fees.
+        // Create 3 users.
+        // Each user will open the same 6 orders, 3 buys and 3 sells
+        // some users will cancel orders
+        // price will move so keepers can fill orders.
+        // Create the situation where a user places an order, then it is filled
+        // Then price reverts back to where order is OTM, but user tries to cancel it
+        // Then another user places the same order
+        // OG user tries to cancel again which should fail.
+    }
+
     // TODO integration test where we reuse orders.
-    // TODO test adding and removing users from an order and make sure userCount is updated correctly
-    // TODO add a test where two pools with the same token are added(with different fee tiers)
-    // TODO like might need to protect against the following.
-    // User places order
-    // Order is filled
-    // User does not claim
-    // Price reverse making the original order bounds OTM
-    // User calls cancel order. This should revert, then if a new user opens an order using the same BatchOrder, it should still revert!
+    // based off this, make sure the BatchOrder struct is what we expect when reusing a position.
+    // Positions can be reused if all users in the order cancel, or the order is fulfilled
 
     function _checkList(
         IUniswapV3Pool pool,
