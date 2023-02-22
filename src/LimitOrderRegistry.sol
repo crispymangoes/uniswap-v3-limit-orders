@@ -1350,48 +1350,4 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     function isOrderReadyForClaim(uint128 batchId) external view returns (bool) {
         return claim[batchId].isReadyForClaim;
     }
-
-    // /**
-    //  * @notice Given a pool and target tick, find the closest node in the list
-    //  */
-    // function findNode(UniswapV3Pool pool, int24 targetTick) external view returns (uint256 closestNode) {
-    //     int24 tickSpacing = pool.tickSpacing();
-    //     // Make sure targetTick is divisible by spacing.
-    //     if (targetTick % tickSpacing != 0) revert LimitOrderRegistry__InvalidTargetTick(targetTick, tickSpacing);
-
-    //     int24 delta;
-
-    //     PoolData memory data = poolToData[pool];
-
-    //     // List is empty.
-    //     if (data.centerHead == 0 && data.centerTail == 0) return 0;
-
-    //     while (true) {
-    //         uint256 upperNode = getPositionFromTicks[targetTick + delta][targetTick + delta + tickSpacing];
-    //         uint256 lowerNode = getPositionFromTicks[targetTick - delta - tickSpacing][targetTick - delta];
-
-    //         // Check if the upper node is in the list.
-    //         if (upperNode != 0) {
-    //             BatchOrder memory order = orderBook[upperNode];
-    //             if (
-    //                 order.head != 0 || order.tail != 0 || data.centerHead != upperNode || data.centerTail != upperNode
-    //             ) {
-    //                 // Node is in the list
-    //                 return upperNode;
-    //             }
-    //         }
-
-    //         if (lowerNode != 0) {
-    //             BatchOrder memory order = orderBook[lowerNode];
-    //             if (
-    //                 order.head != 0 || order.tail != 0 || data.centerHead != lowerNode || data.centerTail != lowerNode
-    //             ) {
-    //                 // Node is in the list
-    //                 return lowerNode;
-    //             }
-    //         }
-
-    //         delta += tickSpacing;
-    //     }
-    // }
 }
