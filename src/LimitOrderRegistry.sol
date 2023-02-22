@@ -12,8 +12,11 @@ import { LinkTokenInterface } from "@chainlink/contracts/src/v0.8/interfaces/Lin
 import { IKeeperRegistrar, RegistrationParams } from "src/interfaces/chainlink/IKeeperRegistrar.sol";
 import { Context } from "@openzeppelin/contracts/utils/Context.sol";
 
-import { console } from "@forge-std/Test.sol";
-
+/**
+ * @title Limit Order Registry
+ * @notice Allows users to create decentralized limit orders.
+ * @author crispymangoes
+ */
 contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holder, Context {
     using SafeTransferLib for ERC20;
 
@@ -21,7 +24,14 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                              STRUCTS
     //////////////////////////////////////////////////////////////*/
 
-    // Stores the last saved center position of the orderBook based off an input UniV3 pool
+    /**
+     * @notice Stores linked list center values, and frequently used pool values.
+     * @param centerHead Linked list center value closer to head of the list
+     * @param centerTail Linked list center value closer to tail of the list
+     * @param token0 ERC20 token0 of the pool
+     * @param token1 ERC20 token1 of the pool
+     * @param fee Uniswap V3 pool fee
+     */
     struct PoolData {
         uint256 centerHead;
         uint256 centerTail;
@@ -30,29 +40,52 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         uint24 fee;
     }
 
+    /**
+     * @notice Stores information about batches of orders.
+     * @dev User orders can be batched together if they share the same target price.
+     * @param direction Determines what direction the tick must move in order for the order to be filled
+     *        - true, pool tick must INCREASE to fill this order
+     *        - false, pool tick must DECREASE to fill this order
+     * @param tickUpper The upper tick of the underlying LP position
+     * @param tickLower The lower tick of the underlying LP position
+     * @param userCount The number of users in this batch order
+     * @param batchId Unique id used to distinguish this batch order from another batch order in the past that used the same LP position
+     * @param token0Amount The amount of token0 in this order
+     * @param token1Amount The amount of token1 in this order
+     * @param head The next node in the linked list when moving toward the head
+     * @param tail The next node in the linked list when moving toward the tail
+     */
     struct BatchOrder {
-        bool direction; //Determines what direction we are going, set when minting a new position or adding an exiting position to the order book
-        int24 tickUpper; // Set when the LP position is minted for the first time
-        int24 tickLower; // Set when the LP position is minted for the first time
-        uint64 userCount; // Reset on fulfillments, decremented on cancel, incremented on new user entering order
-        uint128 batchId; // The id where the user data is currently stored
-        uint128 token0Amount; // Updated in _updateOrder, cancelOrder, zeroed out on order fulfillment
-        uint128 token1Amount; // Updated in _updateOrder, cancelOrder, zeroed out on order fulfillment
-        uint256 head; // updated on order fulfillment, and in _removeOrderFromList, and during _addPositionToList
-        uint256 tail; // updated on order fulfillment, and in _removeOrderFromList, and during _addPositionToList
+        bool direction;
+        int24 tickUpper;
+        int24 tickLower;
+        uint64 userCount;
+        uint128 batchId;
+        uint128 token0Amount;
+        uint128 token1Amount;
+        uint256 head;
+        uint256 tail;
     }
 
+    /**
+     * @notice Stores batch order information and underlying LP position token id.
+     * @param id the underling LP position token id
+     * @param batchOrder see BatchOrder above
+     */
     struct BatchOrderViewData {
         uint256 id;
         BatchOrder batchOrder;
     }
 
-    struct UserData {
-        address user;
-        uint96 depositAmount;
-    }
-
-    // Using the below struct values and the userData array, we can figure out how much a user is owed.
+    /**
+     * @notice Stores information needed for users to make claims.
+     * @param pool The Uniswap V3 pool the batch order was in
+     * @param token0Amount The amount of token0 in the order
+     * @param token1Amount The amount of token1 in the order
+     * @param feePerUser The native token fee that must be paid on order claiming
+     * @param direction The underlying order direction, used to determine input/output token of the order
+     * @param isReadyForClaim Explicit bool indicating whether or not this order is ready to be claimed
+     */
     struct Claim {
         UniswapV3Pool pool;
         uint128 token0Amount; //Can either be the deposit amount or the amount got out of liquidity changing to the other token
@@ -64,6 +97,13 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
 
     /**
      * @notice Struct used to store variables needed during order creation.
+     * @param tick The target tick of the order
+     * @param upper The upper tick of the underlying LP position
+     * @param lower The lower tick of the underlying LP position
+     * @param userTotal The total amount of assets the user has in the order
+     * @param positionId The underling LP position token id this order is adding liquidity to
+     * @param amount0 Can be the amount of assets user added to the order, based off orders direction
+     * @param amount1 Can be the amount of assets user added to the order, based off orders direction
      */
     struct OrderDetails {
         int24 tick;
