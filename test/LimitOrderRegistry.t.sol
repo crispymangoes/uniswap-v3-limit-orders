@@ -11,7 +11,6 @@ import { IKeeperRegistrar as KeeperRegistrar } from "src/interfaces/chainlink/IK
 
 import { Test, console } from "@forge-std/Test.sol";
 
-// TODO tests failed after changing gas price numbers.
 contract LimitOrderRegistryTest is Test {
     LimitOrderRegistry public registry;
 

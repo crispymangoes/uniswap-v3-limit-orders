@@ -62,6 +62,19 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         bool isReadyForClaim;
     }
 
+    /**
+     * @notice Struct used to store variables needed during order creation.
+     */
+    struct OrderDetails {
+        int24 tick;
+        int24 upper;
+        int24 lower;
+        uint128 userTotal;
+        uint256 positionId;
+        uint128 amount0;
+        uint128 amount1;
+    }
+
     /*//////////////////////////////////////////////////////////////
                              GLOBAL STATE
     //////////////////////////////////////////////////////////////*/
@@ -71,33 +84,87 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
      */
     mapping(address => uint256) public tokenToSwapFees;
 
-    // How users claim their tokens, just need to pass in the uint128 batchId
+    /**
+     * @notice Used to store claim information needed when users are claiming their orders.
+     */
     mapping(uint128 => Claim) public claim;
 
+    /**
+     * @notice Stores the pools center head/tail, as well as frequently read values.
+     */
     mapping(UniswapV3Pool => PoolData) public poolToData;
 
+    /**
+     * @notice Maps tick ranges to LP positions owned by this contract.
+     */
     mapping(int24 => mapping(int24 => uint256)) public getPositionFromTicks; // maps lower -> upper -> positionId
 
-    // Simplest approach is to have an owner set value for minimum liquidity
+    /**
+     * @notice The minimum amount of assets required to create a `newOrder`.
+     * @dev Changeable by owner.
+     */
     mapping(ERC20 => uint256) public minimumAssets;
+
+    /**
+     * @notice Approximated amount of gas needed to fulfill 1 BatchOrder.
+     * @dev Changeable by owner.
+     */
     uint32 public upkeepGasLimit = 300_000;
+
+    /**
+     * @notice Approximated gas price used to fulfill orders.
+     * @dev Changeable by owner.
+     */
     uint32 public upkeepGasPrice = 30;
+
+    /**
+     * @notice Max number of orders that can be filled in 1 upkeep call.
+     * @dev Changeable by owner.
+     */
     uint16 public maxFillsPerUpkeep = 10;
 
-    // Zero is reserved
+    /**
+     * @notice Value is incremented whenever a new BatchOrder is added to the `orderBook`.
+     * @dev Zero is reserved.
+     */
     uint128 public batchCount = 1;
 
+    /**
+     * @notice Mapping is used to store user deposit amounts in each BatchOrder.
+     */
     mapping(uint128 => mapping(address => uint128)) private batchIdToUserDepositAmount;
 
     // Orders can be reused to save on NFT space
     // PositionId to Order
+    /**
+     * @notice The `orderBook` maps Uniswap V3 token ids to BatchOrder information.
+     * @dev Each BatchOrder contains a head and tail value which effectively,
+     *      which means BatchOrders are connected using a doubley linked list.
+     */
     mapping(uint256 => BatchOrder) public orderBook;
 
+    /**
+     * @notice Chainlink Automation Registrar contract.
+     */
     IKeeperRegistrar public registrar; // Mainnet 0xDb8e8e2ccb5C033938736aa89Fe4fa1eDfD15a1d
+
     /**
      * @notice Whether or not the contract is shutdown in case of an emergency.
      */
     bool public isShutdown;
+
+    /**
+     * @notice The max possible gas the owner can set for the gas limit.
+     */
+    uint32 public constant MAX_GAS_LIMIT = 500_000;
+
+    /**
+     * @notice The max possible gas price the owner can set for the gas price.
+     * @dev In units of gwei.
+     */
+    uint32 public constant MAX_GAS_PRICE = 1_000;
+
+    uint16 public constant MAX_FILLS_PER_UPKEEP = 20;
 
     /*//////////////////////////////////////////////////////////////
                                  MODIFIERS
@@ -121,6 +188,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     event CancelOrder(address user, uint128 amount0, uint128 amount1, BatchOrder effectedOrder);
     event OrderFilled(uint256 batchId, address pool);
     event ShutdownChanged(bool isShutdown);
+    event LimitOrderSetup(address pool);
 
     /*//////////////////////////////////////////////////////////////
                                  ERRORS
@@ -145,6 +213,9 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     error LimitOrderRegistry__OrderNotReadyToClaim(uint128 batchId);
     error LimitOrderRegistry__ContractShutdown();
     error LimitOrderRegistry__ContractNotShutdown();
+    error LimitOrderRegistry__InvalidGasLimit();
+    error LimitOrderRegistry__InvalidGasPrice();
+    error LimitOrderRegistry__InvalidFillsPerUpkeep();
 
     /*//////////////////////////////////////////////////////////////
                                  ENUMS
@@ -183,14 +254,26 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                               OWNER LOGIC
     //////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice No input validation is done because it is in the owners best interest to choose a valid registrar.
+     */
     function setRegistrar(IKeeperRegistrar _registrar) external onlyOwner {
         registrar = _registrar;
     }
 
+    /**
+     * @notice Allows owner to set the fills per upkeep.
+     */
     function setMaxFillsPerUpkeep(uint16 newVal) external onlyOwner {
+        if (newVal == 0 || newVal > MAX_FILLS_PER_UPKEEP) revert LimitOrderRegistry__InvalidFillsPerUpkeep();
         maxFillsPerUpkeep = newVal;
     }
 
+    /**
+     * @notice Allows owner to setup a new limit order for a new pool.
+     * @dev New Limit orders, should have a keeper to fulfill orders.
+     * @dev If `initialUpkeepFunds` is zero, upkeep creation is skipped.
+     */
     function setupLimitOrder(UniswapV3Pool pool, uint256 initialUpkeepFunds) external onlyOwner {
         // Check if Limit Order is already setup for `pool`.
         if (address(poolToData[pool].token0) != address(0)) revert LimitOrderRegistry__PoolAlreadySetup(address(pool));
@@ -222,22 +305,39 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             token1: ERC20(pool.token1()),
             fee: pool.fee()
         });
+
+        emit LimitOrderSetup(address(pool));
     }
 
+    /**
+     * @notice Allows owner to set the minimum assets used to create `newOrder`s.
+     * @dev This value can be zero, but then this contract can be griefed by an attacker spamming low liquidity orders.
+     */
     function setMinimumAssets(uint256 amount, ERC20 asset) external onlyOwner {
         minimumAssets[asset] = amount;
     }
 
-    /// @dev premium should be factored into this value.
+    /**
+     * @notice Allows owner to change the gas limit value used to determine the Native asset fee needed to claim orders.
+     * @dev premium should be factored into this value.
+     */
     function setUpkeepGasLimit(uint32 gasLimit) external onlyOwner {
+        if (gasLimit > MAX_GAS_LIMIT) revert LimitOrderRegistry__InvalidGasLimit();
         upkeepGasLimit = gasLimit;
     }
 
-    // In units of gwei.
+    /**
+     * @notice Allows owner to change the gas price used to determine the Native asset fee needed to claim orders.
+     * @dev `gasPrice` uses units of gwei.
+     */
     function setUpkeepGasPrice(uint32 gasPrice) external onlyOwner {
+        if (gasPrice > MAX_GAS_PRICE) revert LimitOrderRegistry__InvalidGasPrice();
         upkeepGasPrice = gasPrice;
     }
 
+    /**
+     * @notice Allows owner to withdraw swap fees earned from the input token of orders.
+     */
     function withdrawSwapFees(address tokenFeeIsIn) external onlyOwner {
         uint256 fee = tokenToSwapFees[tokenFeeIsIn];
 
@@ -248,6 +348,9 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         ERC20(tokenFeeIsIn).safeTransfer(owner, fee);
     }
 
+    /**
+     * @notice Allows owner to withdraw wrapped native and native assets from this contract.
+     */
     function withdrawNative() external onlyOwner {
         uint256 wrappedNativeBalance = WRAPPED_NATIVE.balanceOf(address(this));
         uint256 nativeBalance = address(this).balance;
@@ -259,7 +362,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
 
     /**
      * @notice Shutdown the cellar. Used in an emergency or if the cellar has been deprecated.
-     * @dev In the case where
      */
     function initiateShutdown() external whenNotShutdown onlyOwner {
         isShutdown = true;
@@ -280,19 +382,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     /*//////////////////////////////////////////////////////////////
                         USER ORDER MANAGEMENT LOGIC
     //////////////////////////////////////////////////////////////*/
-
-    /**
-     * @notice Struct used to store variables needed during order creation.
-     */
-    struct OrderDetails {
-        int24 tick;
-        int24 upper;
-        int24 lower;
-        uint128 userTotal;
-        uint256 positionId;
-        uint128 amount0;
-        uint128 amount1;
-    }
 
     /**
      * @notice Creates a new limit order for a specific pool.
@@ -566,7 +655,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                 // Zero out balances for cancelled order.
                 order.token0Amount = 0;
                 order.token1Amount = 0;
-                // TODO added below like I did for perform upkeep.
                 order.batchId = 0;
             }
         }
@@ -588,6 +676,9 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                      CHAINLINK AUTOMATION LOGIC
     //////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Returned `performData` simply contains a bool indicating which direction in the `orderBook` has orders that need to be fulfilled.
+     */
     function checkUpkeep(bytes calldata checkData) external view returns (bool upkeepNeeded, bytes memory performData) {
         UniswapV3Pool pool = abi.decode(checkData, (UniswapV3Pool));
         (, int24 currentTick, , , , , ) = pool.slot0();
@@ -623,6 +714,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     }
 
     /**
+     * @notice Callable by anyone, as long as there are orders ITM, that need to be fulfilled.
      * @dev Does not use _removeOrderFromList, so that the center head/tail
      *      value is not updated every single time and order is fulfilled, instead we just update it once at the end.
      */
@@ -661,7 +753,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                 order.batchId = 0;
                 // Reset user count.
                 order.userCount = 0;
-                // TODO above was just added to help revert when trying to cancel a fulfilled order, that is now OTM.
                 orderFilled = true;
                 emit OrderFilled(order.batchId, address(pool));
             } else break;
@@ -691,6 +782,9 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                      INTERNAL ORDER LOGIC
     //////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Finds appropriate spot in `orderBook` for an order.
+     */
     function _findSpot(
         PoolData memory data,
         uint256 startingNode,
@@ -739,15 +833,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     }
 
     /**
-     * @notice We revert if center or center tail orders are ITM to stop attackers from manipulating
-     *         pool tick in order to mess up center of linked list.
-     *         Doing this does open a DOS attack vector where a griefer could sandwich attack
-     *         user `newOrder` TXs and cause them to revert. This is unlikely to happen for a few reasons.
-     *         1) There is no monetary gain for the attacker.
-     *         2) The attacker pays swap fees every time they manipulate the pool tick.
-     *         3) The attacker can not use a flash loan so they must have a large sum of capital.
-     *         4) Performing this attack exposes the attacker to arbitrage risk where other bots
-     *            will try to arbitrage the attackers pool.
+     * @notice Checks if newly added order should be made the new center head/tail.
      */
     function _updateCenter(
         UniswapV3Pool pool,
@@ -786,11 +872,10 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         }
     }
 
-    function _revertIfOrderITM(int24 currentTick, BatchOrder memory order) internal pure {
-        OrderStatus status = _getOrderStatus(currentTick, order.tickLower, order.tickUpper, order.direction);
-        if (status == OrderStatus.ITM) revert LimitOrderRegistry__CenterITM();
-    }
-
+    /**
+     * @notice Check if a given Uniswap V3 position is already in the `orderBook`.
+     * @dev Looks at Nodes head and tail, and checks for edge case of node being the only node in the `orderBook`
+     */
     function _checkThatNodeIsInList(
         uint256 node,
         BatchOrder memory order,
@@ -802,6 +887,9 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         }
     }
 
+    /**
+     * @notice Add a Uniswap V3 LP position to the `orderBook`.
+     */
     function _addPositionToList(
         PoolData memory data,
         uint256 startingNode,
@@ -819,6 +907,10 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         }
     }
 
+    /**
+     * @notice Setup a newly minted LP position, or one being reused.
+     * @dev Sets batchId, and direction.
+     */
     function _setupOrder(bool direction, uint256 position) internal {
         BatchOrder storage order = orderBook[position];
         order.batchId = batchCount;
@@ -826,6 +918,11 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         batchCount++;
     }
 
+    /**
+     * @notice Updates a BatchOrder's token0/token1 amount, as well as associated
+     *         `batchIdToUserDepositAmount` mapping value.
+     * @dev If user is new to the order, increment userCount.
+     */
     function _updateOrder(
         uint256 positionId,
         address user,
@@ -849,6 +946,9 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         return (originalDepositAmount + amount);
     }
 
+    /**
+     * @notice Mints a new Uniswap V3 LP position.
+     */
     function _mintPosition(
         PoolData memory data,
         int24 upper,
@@ -895,6 +995,9 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         return tokenId;
     }
 
+    /**
+     * @notice Adds liquidity to a given `positionId`.
+     */
     function _addToPosition(
         PoolData memory data,
         uint256 positionId,
@@ -929,12 +1032,22 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             data.token1.safeApprove(address(POSITION_MANAGER), 0);
     }
 
+    /**
+     * @notice Enforces minimum liquidity requirements for orders.
+     */
     function _enforceMinimumLiquidity(uint256 amount, ERC20 asset) internal view {
         uint256 minimum = minimumAssets[asset];
         if (minimum == 0) revert LimitOrderRegistry__MinimumNotSet(address(asset));
         if (amount < minimum) revert LimitOrderRegistry__MinimumNotMet(address(asset), minimum, amount);
     }
 
+    /**
+     * @notice Helper function to determine an orders status.
+     * @dev Returns
+     *      - ITM if order is ready to be filled, and is composed of wanted asset
+     *      - OTM if order is not ready to be filled, but order can still be cancelled, because order is composed of asset to sell
+     *      - MIXED order is composed of both wanted asset, and asset to sell, can not be fulfilled or cancelled.
+     */
     function _getOrderStatus(
         int24 currentTick,
         int24 lower,
@@ -955,6 +1068,10 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         }
     }
 
+    /**
+     * @notice Called during `performUpkeep` to fulfill an ITM order.
+     * @dev Sets Claim info, removes all liquidity from position, and zeroes out BatchOrder amount0 and amount1 values.
+     */
     function _fulfillOrder(
         uint256 target,
         UniswapV3Pool pool,
@@ -993,6 +1110,10 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         order.token1Amount = 0;
     }
 
+    /**
+     * @notice Removes liquidity from `target` Uniswap V3 LP position.
+     * @dev Collects fees from `target` position.
+     */
     function _takeFromPosition(
         uint256 target,
         UniswapV3Pool pool,
@@ -1054,6 +1175,10 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         return (amount0, amount1);
     }
 
+    /**
+     * @notice Removes an order from the `orderBook`.
+     * @dev Checks if order is one of the center values, and updates the head if need be.
+     */
     function _removeOrderFromList(
         uint256 target,
         UniswapV3Pool pool,
@@ -1085,7 +1210,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     /**
      * @notice Helper function to view the top 20 entries in the linked list.
      */
-    //  TODO make this more verbose so FE can use it to show exact state.
     function viewList(UniswapV3Pool pool) public view returns (uint256[10] memory heads, uint256[10] memory tails) {
         uint256 next = poolToData[pool].centerHead;
         for (uint256 i; i < 10; ++i) {
@@ -1104,6 +1228,13 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         }
     }
 
+    /**
+     * @notice Walks the `orderBook` in a specific `direction`, returning an array of BatchOrderViewData with length of up to `returnCount`.
+     * @param pool UniswapV3 pool whose order book you want to query
+     * @param startingNode the node to start walking from
+     * @param returnCount the max number of values in return array
+     * @param direction to walk the order book
+     */
     function walkOrders(
         UniswapV3Pool pool,
         uint256 startingNode,
@@ -1165,6 +1296,9 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         return claim[batchId].feePerUser;
     }
 
+    /**
+     * @notice Helper function to view if a BatchOrder is ready to claim.
+     */
     function isOrderReadyForClaim(uint128 batchId) external view returns (bool) {
         return claim[batchId].isReadyForClaim;
     }
