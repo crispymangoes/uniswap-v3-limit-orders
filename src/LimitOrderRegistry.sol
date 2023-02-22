@@ -461,16 +461,21 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                 details.amount1,
                 direction
             );
+
             // Add it to the list.
             _addPositionToList(data, startingNode, targetTick, details.positionId);
+
             // Set new orders upper and lower tick.
             orderBook[details.positionId].tickLower = details.lower;
             orderBook[details.positionId].tickUpper = details.upper;
-            //  create a new batchId, direction.
+
+            // Setup BatchOrder, setting batchId, direction.
             _setupOrder(direction, details.positionId);
-            // update token0Amount, token1Amount, batchIdToUserDepositAmount mapping.
+
+            // Update token0Amount, token1Amount, batchIdToUserDepositAmount mapping.
             details.userTotal = _updateOrder(details.positionId, sender, amount);
 
+            // Update the center values if need be.
             _updateCenter(pool, details.positionId, details.tick, details.upper, details.lower);
 
             // Update getPositionFromTicks since we have a new LP position.
@@ -479,26 +484,29 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             // Check if the position id is already being used in List.
             BatchOrder memory order = orderBook[details.positionId];
             if (order.token0Amount > 0 || order.token1Amount > 0) {
-                // Order is already in the linked list, ignore proposed spot.
-                // Need to add liquidity,
+                // Need to add liquidity.
                 PoolData memory data = poolToData[pool];
                 _addToPosition(data, details.positionId, details.amount0, details.amount1, direction);
-                // update token0Amount, token1Amount, batchIdToUserDepositAmount mapping.
+
+                // Update token0Amount, token1Amount, batchIdToUserDepositAmount mapping.
                 details.userTotal = _updateOrder(details.positionId, sender, amount);
             } else {
-                // We already have this order.
+                // We already have an LP position with given tick ranges, but it is not in linked list.
                 PoolData memory data = poolToData[pool];
 
                 // Add it to the list.
                 _addPositionToList(data, startingNode, targetTick, details.positionId);
-                //  create a new batchId, direction.
+
+                // Setup BatchOrder, setting batchId, direction.
                 _setupOrder(direction, details.positionId);
 
-                // Need to add liquidity,
+                // Need to add liquidity.
                 _addToPosition(data, details.positionId, details.amount0, details.amount1, direction);
-                // update token0Amount, token1Amount, batchIdToUserDepositAmount mapping.
+
+                // Update token0Amount, token1Amount, batchIdToUserDepositAmount mapping.
                 details.userTotal = _updateOrder(details.positionId, sender, amount);
 
+                // Update the center values if need be.
                 _updateCenter(pool, details.positionId, details.tick, details.upper, details.lower);
             }
         }
@@ -783,6 +791,21 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     //////////////////////////////////////////////////////////////*/
 
     /**
+     * @notice Check if a given Uniswap V3 position is already in the `orderBook`.
+     * @dev Looks at Nodes head and tail, and checks for edge case of node being the only node in the `orderBook`
+     */
+    function _checkThatNodeIsInList(
+        uint256 node,
+        BatchOrder memory order,
+        PoolData memory data
+    ) internal pure {
+        if (order.head == 0 && order.tail == 0) {
+            // Possible but the order may be centerTail or centerHead.
+            if (data.centerHead != node && data.centerTail != node) revert LimitOrderRegistry__OrderNotInList(node);
+        }
+    }
+
+    /**
      * @notice Finds appropriate spot in `orderBook` for an order.
      */
     function _findSpot(
@@ -869,21 +892,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                 }
                 // else nothing to do.
             }
-        }
-    }
-
-    /**
-     * @notice Check if a given Uniswap V3 position is already in the `orderBook`.
-     * @dev Looks at Nodes head and tail, and checks for edge case of node being the only node in the `orderBook`
-     */
-    function _checkThatNodeIsInList(
-        uint256 node,
-        BatchOrder memory order,
-        PoolData memory data
-    ) internal pure {
-        if (order.head == 0 && order.tail == 0) {
-            // Possible but the order may be centerTail or centerHead.
-            if (data.centerHead != node && data.centerTail != node) revert LimitOrderRegistry__OrderNotInList(node);
         }
     }
 
@@ -1303,47 +1311,47 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         return claim[batchId].isReadyForClaim;
     }
 
-    /**
-     * @notice Given a pool and target tick, find the closest node in the list
-     */
-    function findNode(UniswapV3Pool pool, int24 targetTick) external view returns (uint256 closestNode) {
-        int24 tickSpacing = pool.tickSpacing();
-        // Make sure targetTick is divisible by spacing.
-        if (targetTick % tickSpacing != 0) revert LimitOrderRegistry__InvalidTargetTick(targetTick, tickSpacing);
+    // /**
+    //  * @notice Given a pool and target tick, find the closest node in the list
+    //  */
+    // function findNode(UniswapV3Pool pool, int24 targetTick) external view returns (uint256 closestNode) {
+    //     int24 tickSpacing = pool.tickSpacing();
+    //     // Make sure targetTick is divisible by spacing.
+    //     if (targetTick % tickSpacing != 0) revert LimitOrderRegistry__InvalidTargetTick(targetTick, tickSpacing);
 
-        int24 delta;
+    //     int24 delta;
 
-        PoolData memory data = poolToData[pool];
+    //     PoolData memory data = poolToData[pool];
 
-        // List is empty.
-        if (data.centerHead == 0 && data.centerTail == 0) return 0;
+    //     // List is empty.
+    //     if (data.centerHead == 0 && data.centerTail == 0) return 0;
 
-        while (true) {
-            uint256 upperNode = getPositionFromTicks[targetTick + delta][targetTick + delta + tickSpacing];
-            uint256 lowerNode = getPositionFromTicks[targetTick - delta - tickSpacing][targetTick - delta];
+    //     while (true) {
+    //         uint256 upperNode = getPositionFromTicks[targetTick + delta][targetTick + delta + tickSpacing];
+    //         uint256 lowerNode = getPositionFromTicks[targetTick - delta - tickSpacing][targetTick - delta];
 
-            // Check if the upper node is in the list.
-            if (upperNode != 0) {
-                BatchOrder memory order = orderBook[upperNode];
-                if (
-                    order.head != 0 || order.tail != 0 || data.centerHead != upperNode || data.centerTail != upperNode
-                ) {
-                    // Node is in the list
-                    return upperNode;
-                }
-            }
+    //         // Check if the upper node is in the list.
+    //         if (upperNode != 0) {
+    //             BatchOrder memory order = orderBook[upperNode];
+    //             if (
+    //                 order.head != 0 || order.tail != 0 || data.centerHead != upperNode || data.centerTail != upperNode
+    //             ) {
+    //                 // Node is in the list
+    //                 return upperNode;
+    //             }
+    //         }
 
-            if (lowerNode != 0) {
-                BatchOrder memory order = orderBook[lowerNode];
-                if (
-                    order.head != 0 || order.tail != 0 || data.centerHead != lowerNode || data.centerTail != lowerNode
-                ) {
-                    // Node is in the list
-                    return lowerNode;
-                }
-            }
+    //         if (lowerNode != 0) {
+    //             BatchOrder memory order = orderBook[lowerNode];
+    //             if (
+    //                 order.head != 0 || order.tail != 0 || data.centerHead != lowerNode || data.centerTail != lowerNode
+    //             ) {
+    //                 // Node is in the list
+    //                 return lowerNode;
+    //             }
+    //         }
 
-            delta += tickSpacing;
-        }
-    }
+    //         delta += tickSpacing;
+    //     }
+    // }
 }

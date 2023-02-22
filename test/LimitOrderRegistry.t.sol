@@ -994,21 +994,221 @@ contract LimitOrderRegistryTest is Test {
         _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
     }
 
-    function testIntergration() external {
-        // Create two pools for the same token pair but with different swap fees.
-        // Create 3 users.
-        // Each user will open the same 6 orders, 3 buys and 3 sells
-        // some users will cancel orders
-        // price will move so keepers can fill orders.
-        // Create the situation where a user places an order, then it is filled
-        // Then price reverts back to where order is OTM, but user tries to cancel it
-        // Then another user places the same order
-        // OG user tries to cancel again which should fail.
-    }
+    function testReusingOrders() external {
+        // Test story.
+        // Users A, and B place orders
+        // Order is filled.
+        // Price reverts.
+        // User B tries to cancel the order(revert)
+        // User C places the same order
+        // User B tries to cancel the order(revert)
+        // User C cancels their order
+        // User D places the same order as User C
 
-    // TODO integration test where we reuse orders.
-    // based off this, make sure the BatchOrder struct is what we expect when reusing a position.
-    // Positions can be reused if all users in the order cancel, or the order is fulfilled
+        // Check that BatchOrder is correct
+        // Have User A, and B claim their orders
+        // Price moves tick up, then reuse original order but for an order with opposite direction.
+        uint96 usdcAmount = 1_000e6;
+        uint96 wethAmount = 1e18;
+        bool upkeepNeeded;
+        bytes memory performData;
+        int24 targetTick;
+
+        {
+            (, int24 tick, , , , , ) = USDC_WETH_05_POOL.slot0();
+            targetTick = tick - (tick % USDC_WETH_05_POOL.tickSpacing()) + 20;
+        }
+
+        address userA = vm.addr(10);
+        address userB = vm.addr(20);
+        address userC = vm.addr(30);
+        address userD = vm.addr(40);
+        address userE = vm.addr(50);
+
+        // Users A and B place order 20 ticks out.
+        vm.startPrank(userA);
+        _createOrder(userA, USDC_WETH_05_POOL, 20, USDC, usdcAmount);
+        vm.stopPrank();
+
+        vm.startPrank(userB);
+        _createOrder(userB, USDC_WETH_05_POOL, 20, USDC, usdcAmount);
+        vm.stopPrank();
+
+        {
+            (bool direction, , , uint64 userCount, uint128 batchId, , , , ) = registry.orderBook(id0);
+            assertEq(direction, true, "Direction should be true.");
+            assertEq(userCount, 2, "There should be 2 users in the order.");
+            assertEq(batchId, 1, "Batch Id should be one.");
+        }
+
+        // Price moves to fill order.
+        {
+            address[] memory path = new address[](2);
+            path[0] = address(WETH);
+            path[1] = address(USDC);
+
+            uint24[] memory poolFees = new uint24[](1);
+            poolFees[0] = 500;
+
+            uint256 swapAmount = 770e18;
+            deal(address(WETH), address(this), swapAmount);
+            _swap(path, poolFees, swapAmount);
+        }
+
+        // Fill Order.
+        (upkeepNeeded, performData) = registry.checkUpkeep(abi.encode(USDC_WETH_05_POOL));
+        assertEq(upkeepNeeded, true, "Upkeep should be needed.");
+        registry.performUpkeep(performData);
+
+        // Price reverts.
+        {
+            address[] memory path = new address[](2);
+            path[0] = address(USDC);
+            path[1] = address(WETH);
+
+            uint24[] memory poolFees = new uint24[](1);
+            poolFees[0] = 500;
+
+            uint256 swapAmount = 960_000e6;
+            deal(address(USDC), address(this), swapAmount);
+            _swap(path, poolFees, swapAmount);
+        }
+
+        // User B tries to cancel filled order.
+        vm.startPrank(userB);
+        vm.expectRevert(bytes(abi.encodeWithSelector(LimitOrderRegistry.LimitOrderRegistry__InvalidBatchId.selector)));
+        registry.cancelOrder(USDC_WETH_05_POOL, targetTick, true);
+        vm.stopPrank();
+
+        // User C places identical order to Users A and B.
+        vm.startPrank(userC);
+        _createOrder(userC, USDC_WETH_05_POOL, 20, USDC, usdcAmount);
+        vm.stopPrank();
+
+        // User B tries to cancel filled order.
+        vm.startPrank(userB);
+        vm.expectRevert(
+            bytes(abi.encodeWithSelector(LimitOrderRegistry.LimitOrderRegistry__UserNotFound.selector, userB, 2))
+        );
+        registry.cancelOrder(USDC_WETH_05_POOL, targetTick, true);
+        vm.stopPrank();
+
+        {
+            (bool direction, , , uint64 userCount, uint128 batchId, , , , ) = registry.orderBook(id0);
+            assertEq(direction, true, "Direction should be true.");
+            assertEq(userCount, 1, "There should be 1 users in the order.");
+            assertEq(batchId, 2, "Batch Id should be 2.");
+        }
+
+        // User C cancel their order.
+        vm.startPrank(userC);
+        registry.cancelOrder(USDC_WETH_05_POOL, targetTick, true);
+        vm.stopPrank();
+
+        {
+            (bool direction, , , uint64 userCount, uint128 batchId, , , , ) = registry.orderBook(id0);
+            assertEq(direction, true, "Direction should be true.");
+            assertEq(userCount, 0, "There should be 1 users in the order.");
+            assertEq(batchId, 0, "Batch Id should be 0.");
+        }
+
+        // User D places identical order to Users A, B, and C.
+        vm.startPrank(userD);
+        _createOrder(userD, USDC_WETH_05_POOL, 20, USDC, usdcAmount);
+        vm.stopPrank();
+
+        {
+            (bool direction, , , uint64 userCount, uint128 batchId, , , , ) = registry.orderBook(id0);
+            assertEq(direction, true, "Direction should be true.");
+            assertEq(userCount, 1, "There should be 1 users in the order.");
+            assertEq(batchId, 3, "Batch Id should be 3.");
+        }
+
+        // Price moves to fill order.
+        {
+            address[] memory path = new address[](2);
+            path[0] = address(WETH);
+            path[1] = address(USDC);
+
+            uint24[] memory poolFees = new uint24[](1);
+            poolFees[0] = 500;
+
+            uint256 swapAmount = 100e18;
+            deal(address(WETH), address(this), swapAmount);
+            _swap(path, poolFees, swapAmount);
+        }
+
+        // Fill Order.
+        (upkeepNeeded, performData) = registry.checkUpkeep(abi.encode(USDC_WETH_05_POOL));
+        assertEq(upkeepNeeded, true, "Upkeep should be needed.");
+        registry.performUpkeep(performData);
+
+        // User E places an order going opposite direction, but uses the same underlying LP position.
+        vm.startPrank(userE);
+        _createOrder(userE, USDC_WETH_05_POOL, -30, WETH, wethAmount);
+        vm.stopPrank();
+
+        {
+            (bool direction, , , uint64 userCount, uint128 batchId, , , , ) = registry.orderBook(id0);
+            assertEq(direction, false, "Direction should be false.");
+            assertEq(userCount, 1, "There should be 1 users in the order.");
+            assertEq(batchId, 4, "Batch Id should be 3.");
+        }
+
+        // Price reverts.
+        {
+            address[] memory path = new address[](2);
+            path[0] = address(USDC);
+            path[1] = address(WETH);
+
+            uint24[] memory poolFees = new uint24[](1);
+            poolFees[0] = 500;
+
+            uint256 swapAmount = 960_000e6;
+            deal(address(USDC), address(this), swapAmount);
+            _swap(path, poolFees, swapAmount);
+        }
+
+        // Fill Order.
+        (upkeepNeeded, performData) = registry.checkUpkeep(abi.encode(USDC_WETH_05_POOL));
+        assertEq(upkeepNeeded, true, "Upkeep should be needed.");
+        registry.performUpkeep(performData);
+
+        // Have all users claim their orders, checking that the fee is correct, also should check the amount of assets the user got.
+        uint256 feeOwed = registry.getFeePerUser(1);
+        uint256 totalFeeOwed = uint256(registry.upkeepGasLimit() * registry.upkeepGasPrice()) * 1e9;
+        // Expected WETH balance.
+        uint256 expectedBalance = 791132260405118457;
+        assertEq(feeOwed, totalFeeOwed / 2, "Fee owed should be half of total fee.");
+        deal(userA, feeOwed);
+        vm.prank(userA);
+        registry.claimOrder{ value: feeOwed }(1, userA);
+        assertEq(WETH.balanceOf(userA), expectedBalance, "User A WETH balance should equal expected.");
+
+        vm.prank(userB);
+        deal(userB, feeOwed);
+        registry.claimOrder{ value: feeOwed }(1, userB);
+        assertEq(WETH.balanceOf(userB), expectedBalance, "User B WETH balance should equal expected.");
+
+        feeOwed = registry.getFeePerUser(3);
+        assertEq(feeOwed, totalFeeOwed, "Fee owed should equal total fee.");
+        deal(userD, feeOwed);
+        vm.prank(userD);
+        registry.claimOrder{ value: feeOwed }(3, userD);
+        assertEq(WETH.balanceOf(userD), expectedBalance, "User D WETH balance should equal expected.");
+
+        feeOwed = registry.getFeePerUser(4);
+        assertEq(feeOwed, totalFeeOwed, "Fee owed should equal total fee.");
+        deal(userE, feeOwed);
+        vm.prank(userE);
+        registry.claimOrder{ value: feeOwed }(4, userE);
+
+        // Expected USDC balance.
+        expectedBalance = 1265276111;
+        assertEq(USDC.balanceOf(userE), expectedBalance, "User E USDC balance should equal expected.");
+
+        assertEq(positionManger.balanceOf(address(registry)), 1, "Limit Order Registry should only have 1 position.");
+    }
 
     function _checkList(
         IUniswapV3Pool pool,
