@@ -68,16 +68,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     }
 
     /**
-     * @notice Stores batch order information and underlying LP position token id.
-     * @param id the underling LP position token id
-     * @param batchOrder see BatchOrder above
-     */
-    struct BatchOrderViewData {
-        uint256 id;
-        BatchOrder batchOrder;
-    }
-
-    /**
      * @notice Stores information needed for users to make claims.
      * @param pool The Uniswap V3 pool the batch order was in
      * @param token0Amount The amount of token0 in the order
@@ -1256,65 +1246,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @notice Helper function to view the top 20 entries in the linked list.
-     */
-    function viewList(UniswapV3Pool pool) public view returns (uint256[10] memory heads, uint256[10] memory tails) {
-        uint256 next = poolToData[pool].centerHead;
-        for (uint256 i; i < 10; ++i) {
-            if (next == 0) break;
-            BatchOrder memory target = orderBook[next];
-            heads[i] = next;
-            next = target.head;
-        }
-
-        next = poolToData[pool].centerTail;
-        for (uint256 i; i < 10; ++i) {
-            if (next == 0) break;
-            BatchOrder memory target = orderBook[next];
-            tails[i] = next;
-            next = target.tail;
-        }
-    }
-
-    /**
-     * @notice Walks the `orderBook` in a specific `direction`, returning an array of BatchOrderViewData with length of up to `returnCount`.
-     * @param pool UniswapV3 pool whose order book you want to query
-     * @param startingNode the node to start walking from
-     * @param returnCount the max number of values in return array
-     * @param direction to walk the order book
-     */
-    function walkOrders(
-        UniswapV3Pool pool,
-        uint256 startingNode,
-        uint256 returnCount,
-        bool direction
-    ) external view returns (BatchOrderViewData[] memory orders) {
-        orders = new BatchOrderViewData[](returnCount);
-        PoolData memory data = poolToData[pool];
-        if (direction) {
-            // Walk toward head.
-            uint256 targetId = startingNode == 0 ? data.centerHead : startingNode;
-            BatchOrder memory target = orderBook[targetId];
-            for (uint256 i; i < returnCount; ++i) {
-                orders[i] = BatchOrderViewData({ id: targetId, batchOrder: target });
-                targetId = target.head;
-                if (targetId != 0) target = orderBook[targetId];
-                else break;
-            }
-        } else {
-            // Walk toward tail.
-            uint256 targetId = startingNode == 0 ? data.centerTail : startingNode;
-            BatchOrder memory target = orderBook[targetId];
-            for (uint256 i; i < returnCount; ++i) {
-                orders[i] = BatchOrderViewData({ id: targetId, batchOrder: target });
-                targetId = target.tail;
-                if (targetId != 0) target = orderBook[targetId];
-                else break;
-            }
-        }
-    }
-
-    /**
      * @notice Helper function that finds the appropriate spot in the linked list for a new order.
      * @param pool the Uniswap V3 pool you want to create an order in
      * @param startingNode the UniV3 position Id to start looking
@@ -1349,5 +1280,13 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
      */
     function isOrderReadyForClaim(uint128 batchId) external view returns (bool) {
         return claim[batchId].isReadyForClaim;
+    }
+
+    function getOrderBook(uint256 id) external view returns (BatchOrder memory) {
+        return orderBook[id];
+    }
+
+    function getClaim(uint128 batchId) external view returns (Claim memory) {
+        return claim[batchId];
     }
 }

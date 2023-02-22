@@ -76,7 +76,6 @@ contract TradeManagerTest is Test {
 
     function testHappyPath() external {
         uint96 usdcAmount = 1_000e6;
-        uint96 wethAmount = 1e18;
 
         // Create a trade manager.
         deal(address(LINK), address(this), 10e18);

@@ -2,6 +2,7 @@
 pragma solidity 0.8.16;
 
 import { LimitOrderRegistry } from "src/LimitOrderRegistry.sol";
+import { LimitOrderRegistryLens } from "src/LimitOrderRegistryLens.sol";
 import { ERC20 } from "@solmate/tokens/ERC20.sol";
 import { NonfungiblePositionManager as INonfungiblePositionManager } from "src/interfaces/uniswapV3/NonfungiblePositionManager.sol";
 import { UniswapV3Pool as IUniswapV3Pool } from "src/interfaces/uniswapV3/UniswapV3Pool.sol";
@@ -13,6 +14,7 @@ import { Test, console } from "@forge-std/Test.sol";
 
 contract LimitOrderRegistryTest is Test {
     LimitOrderRegistry public registry;
+    LimitOrderRegistryLens public lens;
 
     INonfungiblePositionManager private positionManger =
         INonfungiblePositionManager(0xC36442b4a4522E871399CD717aBDD847Ab11FE88);
@@ -53,6 +55,7 @@ contract LimitOrderRegistryTest is Test {
 
     function setUp() external {
         registry = new LimitOrderRegistry(address(this), positionManger, WMATIC, LINK, REGISTRAR);
+        lens = new LimitOrderRegistryLens(registry);
         registry.setMinimumAssets(1, USDC);
         registry.setMinimumAssets(1, WETH);
 
@@ -875,6 +878,15 @@ contract LimitOrderRegistryTest is Test {
         _createOrder(address(this), USDC_WETH_05_POOL, -60, WETH, wethAmount);
         _createOrder(address(this), USDC_WETH_05_POOL, -70, WETH, wethAmount);
 
+        LimitOrderRegistryLens.BatchOrderViewData[] memory data = lens.walkOrders(USDC_WETH_05_POOL, id1, 2, true);
+        assertEq(data[0].id, id1, "Walk Orders returned wrong id.");
+        assertEq(data[1].id, id2, "Walk Orders returned wrong id.");
+
+        data = lens.walkOrders(USDC_WETH_05_POOL, 0, 3, false);
+        assertEq(data[0].id, id6, "Walk Orders returned wrong id.");
+        assertEq(data[1].id, id7, "Walk Orders returned wrong id.");
+        assertEq(data[2].id, id8, "Walk Orders returned wrong id.");
+
         // Move price so all head orders can be filled.
         {
             address[] memory path = new address[](2);
@@ -1210,12 +1222,31 @@ contract LimitOrderRegistryTest is Test {
         assertEq(positionManger.balanceOf(address(registry)), 1, "Limit Order Registry should only have 1 position.");
     }
 
+    function viewList(IUniswapV3Pool pool) public view returns (uint256[10] memory heads, uint256[10] memory tails) {
+        uint256 next;
+        (next, , , , ) = registry.poolToData(pool);
+        for (uint256 i; i < 10; ++i) {
+            if (next == 0) break;
+            (, , , , , , , uint256 head, ) = registry.orderBook(next);
+            heads[i] = next;
+            next = head;
+        }
+
+        (, next, , , ) = registry.poolToData(pool);
+        for (uint256 i; i < 10; ++i) {
+            if (next == 0) break;
+            (, , , , , , , , uint256 tail) = registry.orderBook(next);
+            tails[i] = next;
+            next = tail;
+        }
+    }
+
     function _checkList(
         IUniswapV3Pool pool,
         uint256[10] memory expectedHeads,
         uint256[10] memory expectedTails
     ) internal {
-        (uint256[10] memory heads, uint256[10] memory tails) = registry.viewList(pool);
+        (uint256[10] memory heads, uint256[10] memory tails) = viewList(pool);
 
         // Check heads.
         for (uint256 i; i < 10; ++i) {
