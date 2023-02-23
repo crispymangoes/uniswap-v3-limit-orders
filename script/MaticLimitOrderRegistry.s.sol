@@ -2,8 +2,10 @@
 pragma solidity ^0.8.13;
 
 import { ERC20 } from "@solmate/tokens/ERC20.sol";
-import { MockERC20 } from "src/MockERC20.sol";
 import { LimitOrderRegistry } from "src/LimitOrderRegistry.sol";
+import { LimitOrderRegistryLens } from "src/LimitOrderRegistryLens.sol";
+import { TradeManagerFactory } from "src/TradeManagerFactory.sol";
+import { TradeManager } from "src/TradeManager.sol";
 import { NonfungiblePositionManager as INonfungiblePositionManager } from "src/interfaces/uniswapV3/NonfungiblePositionManager.sol";
 import { LinkTokenInterface } from "@chainlink/contracts/src/v0.8/interfaces/LinkTokenInterface.sol";
 import { IKeeperRegistrar as KeeperRegistrar } from "src/interfaces/chainlink/IKeeperRegistrar.sol";
@@ -13,11 +15,14 @@ import "forge-std/Script.sol";
 
 /**
  * @dev Run
- *      `source .env && forge script script/MaticLimitOrderRegistry.s.sol:MaticLimitOrderRegistryScript --rpc-url $MATIC_RPC_URL  --private-key $PRIVATE_KEY —optimize —optimizer-runs 200 --with-gas-price 100000000000 --verify --etherscan-api-key $POLYGONSCAN_KEY --broadcast --slow`
+ *      `source .env && forge script script/MaticLimitOrderRegistry.s.sol:MaticLimitOrderRegistryScript --rpc-url $MATIC_RPC_URL  --private-key $PRIVATE_KEY —optimize —optimizer-runs 200 --with-gas-price 300000000000 --verify --etherscan-api-key $POLYGONSCAN_KEY --broadcast --slow`
  * @dev Optionally can change `--with-gas-price` to something more reasonable
  */
 contract MaticLimitOrderRegistryScript is Script {
     LimitOrderRegistry private registry;
+    LimitOrderRegistryLens private lens;
+    TradeManagerFactory private factory;
+    TradeManager private manager;
 
     ERC20 private USDC = ERC20(0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174);
     ERC20 private WETH = ERC20(0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619);
@@ -36,21 +41,33 @@ contract MaticLimitOrderRegistryScript is Script {
     function run() public {
         vm.startBroadcast();
 
-        // Deploy two fake ERC20 tokens to create a new pool with.
-        // token0 = new MockERC20("Crispy", "C");
-        // token1 = new MockERC20("Mangoes", "M");
-
         // Deploy limit order registry.
         registry = new LimitOrderRegistry(msg.sender, positionManger, WrappedNative, LINK, REGISTRAR);
+        lens = new LimitOrderRegistryLens(registry);
+        TradeManager implementation = new TradeManager();
+        // Initialize implementation.
+        implementation.initialize(
+            address(0),
+            LimitOrderRegistry(address(0)),
+            LinkTokenInterface(address(0)),
+            KeeperRegistrar(address(0)),
+            0
+        );
+        factory = new TradeManagerFactory(address(implementation));
 
         registry.setMinimumAssets(1, USDC);
         registry.setMinimumAssets(1, WETH);
+        registry.setMinimumAssets(1, WrappedNative);
 
-        // Setup pool.
+        // Setup pools.
         uint256 upkeepFunds = 5e18;
         LINK.approve(address(registry), 2 * upkeepFunds);
         registry.setupLimitOrder(USDC_WETH_05_POOL, upkeepFunds);
         registry.setupLimitOrder(WMATIC_USDC_05_POOL, upkeepFunds);
+
+        // Create Trade Manager.
+        LINK.approve(address(factory), upkeepFunds);
+        manager = factory.createTradeManager(registry, LINK, REGISTRAR, upkeepFunds);
 
         vm.stopBroadcast();
     }

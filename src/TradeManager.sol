@@ -39,19 +39,21 @@ contract TradeManager is Initializable, AutomationCompatibleInterface, Owned {
         limitOrderRegistry = _limitOrderRegistry;
 
         // Create new upkeep
-        ERC20(address(LINK)).safeTransferFrom(msg.sender, address(this), initialUpkeepFunds);
-        ERC20(address(LINK)).safeApprove(address(registrar), initialUpkeepFunds);
-        RegistrationParams memory params = RegistrationParams({
-            name: "Trade Manager",
-            encryptedEmail: abi.encode(0),
-            upkeepContract: address(this),
-            gasLimit: UPKEEP_GAS_LIMIT,
-            adminAddress: user,
-            checkData: abi.encode(0),
-            offchainConfig: abi.encode(0),
-            amount: uint96(initialUpkeepFunds)
-        });
-        registrar.registerUpkeep(params);
+        if (initialUpkeepFunds > 0) {
+            ERC20(address(LINK)).safeTransferFrom(msg.sender, address(this), initialUpkeepFunds);
+            ERC20(address(LINK)).safeApprove(address(registrar), initialUpkeepFunds);
+            RegistrationParams memory params = RegistrationParams({
+                name: "Trade Manager",
+                encryptedEmail: abi.encode(0),
+                upkeepContract: address(this),
+                gasLimit: UPKEEP_GAS_LIMIT,
+                adminAddress: user,
+                checkData: abi.encode(0),
+                offchainConfig: abi.encode(0),
+                amount: uint96(initialUpkeepFunds)
+            });
+            registrar.registerUpkeep(params);
+        }
     }
 
     function newOrder(
