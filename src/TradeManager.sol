@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.16;
 
 import { Initializable } from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
@@ -12,22 +12,80 @@ import { IKeeperRegistrar, RegistrationParams } from "src/interfaces/chainlink/I
 import { LimitOrderRegistry } from "src/LimitOrderRegistry.sol";
 import { UniswapV3Pool } from "src/interfaces/uniswapV3/UniswapV3Pool.sol";
 
-// TODO could add logic into the LOR that checks if the caller is a users TradeManager, and if so that allows the caller to create/edit orders on behalf of the user.
-// TODO add some bool that dictates where assets go, like on claim should assets be returned here, or to the owner
-// TODO Could allow users to funds their upkeep through this contract, which would interact with pegswap if needed.
-
+/**
+ * @title Trade Manager
+ * @notice Automates claiming limit orders for the LimitOrderRegistry.
+ * @author crispymangoes
+ * @dev Future improvements.
+ *      - could add logic into the LOR that checks if the caller is a users TradeManager, and if so that allows the caller to
+ *        create/edit orders on behalf of the user.
+ *      - add some bool that dictates where assets go, like on claim should assets be returned here, or to the owner
+ *      - Could allow users to funds their upkeep through this contract, which would interact with pegswap if needed.
+ */
 contract TradeManager is Initializable, AutomationCompatibleInterface, Owned {
     using SafeTransferLib for ERC20;
     using EnumerableSet for EnumerableSet.UintSet;
 
-    EnumerableSet.UintSet private ownerOrders; // Set containing all pending orders owner has
+    /*//////////////////////////////////////////////////////////////
+                             STRUCTS
+    //////////////////////////////////////////////////////////////*/
 
+    /**
+     * @notice Stores information used to claim orders in `performUpkeep`.
+     * @param batchId The order batch id to claim
+     * @param fee The Native fee required to claim the order
+     */
+    struct ClaimInfo {
+        uint128 batchId;
+        uint128 fee;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                             GLOBAL STATE
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Set of batch IDs that the owner currently has orders in.
+     */
+    EnumerableSet.UintSet private ownerOrders;
+
+    /**
+     * @notice The limit order registry contract this trade manager interacts with.
+     */
+    LimitOrderRegistry public limitOrderRegistry;
+
+    /**
+     * @notice The gas limit used when the Trade Managers upkeep is created.
+     */
     uint32 public constant UPKEEP_GAS_LIMIT = 500_000;
 
-    LimitOrderRegistry public limitOrderRegistry;
+    /**
+     * @notice The max amount of claims that can happen in a single upkeep.
+     */
+    uint256 public constant MAX_CLAIMS = 10;
+
+    /**
+     * @notice Allows owner to specify whether they want claimed tokens to be left
+     *         in the TradeManager, or sent to their address.
+     *         -true send tokens to their address
+     *         -false leave tokens in the trade manager
+     */
+    bool public claimToOwner;
 
     constructor() Owned(address(0)) {}
 
+    /*//////////////////////////////////////////////////////////////
+                            INITIALIZE LOGIC
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Initialize function to setup this contract.
+     * @param user The owner of this contract
+     * @param _limitOrderRegistry The limit order registry this contract interacts with
+     * @param LINK The Chainlink token needed to create an upkeep
+     * @param registrar The Chainlink Automation Registrar contract
+     * @param initialUpkeepFunds Amount of link to fund the upkeep with
+     */
     function initialize(
         address user,
         LimitOrderRegistry _limitOrderRegistry,
@@ -38,7 +96,7 @@ contract TradeManager is Initializable, AutomationCompatibleInterface, Owned {
         owner = user;
         limitOrderRegistry = _limitOrderRegistry;
 
-        // Create new upkeep
+        // Create a new upkeep.
         if (initialUpkeepFunds > 0) {
             ERC20(address(LINK)).safeTransferFrom(msg.sender, address(this), initialUpkeepFunds);
             ERC20(address(LINK)).safeApprove(address(registrar), initialUpkeepFunds);
@@ -56,6 +114,20 @@ contract TradeManager is Initializable, AutomationCompatibleInterface, Owned {
         }
     }
 
+    /*//////////////////////////////////////////////////////////////
+                              OWNER LOGIC
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Allows owner to adjust `claimToOwner`.
+     */
+    function setClaimToOwner(bool state) external onlyOwner {
+        claimToOwner = state;
+    }
+
+    /**
+     * @notice See `LimitOrderRegistry.sol:newOrder`.
+     */
     function newOrder(
         UniswapV3Pool pool,
         ERC20 assetIn,
@@ -73,11 +145,10 @@ contract TradeManager is Initializable, AutomationCompatibleInterface, Owned {
         ownerOrders.add(batchId);
     }
 
-    function cancelOrder(
-        UniswapV3Pool pool,
-        int24 targetTick,
-        bool direction
-    ) external onlyOwner {
+    /**
+     * @notice See `LimitOrderRegistry.sol:cancelOrder`.
+     */
+    function cancelOrder(UniswapV3Pool pool, int24 targetTick, bool direction) external onlyOwner {
         (uint128 amount0, uint128 amount1, uint128 batchId) = limitOrderRegistry.cancelOrder(
             pool,
             targetTick,
@@ -89,6 +160,9 @@ contract TradeManager is Initializable, AutomationCompatibleInterface, Owned {
         ownerOrders.remove(batchId);
     }
 
+    /**
+     * @notice See `LimitOrderRegistry.sol:claimOrder`.
+     */
     function claimOrder(uint128 batchId) external onlyOwner {
         uint256 value = limitOrderRegistry.getFeePerUser(batchId);
         limitOrderRegistry.claimOrder{ value: value }(batchId, address(this));
@@ -96,26 +170,33 @@ contract TradeManager is Initializable, AutomationCompatibleInterface, Owned {
         ownerOrders.remove(batchId);
     }
 
+    /**
+     @notice Allows owner to withdraw Native asset from this contract.
+     */
     function withdrawNative(uint256 amount) external onlyOwner {
         payable(owner).transfer(amount);
     }
 
+    /**
+     * @notice Allows owner to withdraw any ERC20 from this contract.
+     */
     function withdrawERC20(ERC20 token, uint256 amount) external onlyOwner {
         token.safeTransfer(owner, amount);
     }
 
     receive() external payable {}
 
-    uint256 public constant MAX_CLAIMS = 10;
+    /*//////////////////////////////////////////////////////////////
+                     CHAINLINK AUTOMATION LOGIC
+    //////////////////////////////////////////////////////////////*/
 
-    struct ClaimInfo {
-        uint128 batchId;
-        uint128 fee;
-    }
-
+    /**
+     * @notice Iterates through `ownerOrders` and stops early if total fee is greater than this contract native balance, or if max claims is met.
+     */
     function checkUpkeep(bytes calldata) external view returns (bool upkeepNeeded, bytes memory performData) {
         uint256 nativeBalance = address(this).balance;
-        // Iterate through owner orders, and build a claim array
+        // Iterate through owner orders, and build a claim array.
+
         uint256 count = ownerOrders.length();
         ClaimInfo[MAX_CLAIMS] memory claimInfo;
         uint256 claimCount;
@@ -124,12 +205,15 @@ contract TradeManager is Initializable, AutomationCompatibleInterface, Owned {
             // Current order is not fulfilled.
             if (!limitOrderRegistry.isOrderReadyForClaim(batchId)) continue;
             uint128 fee = limitOrderRegistry.getFeePerUser(batchId);
+            // Break if manager does not have enough native to pay for claim.
             if (fee > nativeBalance) break;
             // Subtract fee from balance.
             nativeBalance -= fee;
             claimInfo[claimCount].batchId = batchId;
             claimInfo[claimCount].fee = fee;
             claimCount++;
+            // Break if max claims is reached.
+            if (claimCount == MAX_CLAIMS) break;
         }
 
         if (claimCount > 0) {
@@ -139,19 +223,29 @@ contract TradeManager is Initializable, AutomationCompatibleInterface, Owned {
         // else nothing to do.
     }
 
-    // Currently this is claiming as if this contract is the user, which is the intended goal to have an OCO order...
-    // But initially just for auto claiming users orders, but maybe the owner should be able to toggle this?
-
-    // I guess the owner could always be the user if the limit order registry was setup to supoprt the trade manager.
-    // But if we want the two things to be stand alone, then the use of the LOR should be this contract...
+    /**
+     * @notice Accepts array of ClaimInfo.
+     * @dev Passing in incorrect fee values will at worst cost the caller excess gas.
+     *      If fee is too large, excess is returned, or LimitOrderRegistry reverts when it tries to transfer Wrapped Native.
+     *      If fee is too small LimitOrderRegistry reverts when it tries to transfer Wrapped Native.
+     */
     function performUpkeep(bytes calldata performData) external {
         // Accept claim array and claim all orders
         ClaimInfo[MAX_CLAIMS] memory claimInfo = abi.decode(performData, (ClaimInfo[10]));
         for (uint256 i; i < 10; ++i) {
             if (limitOrderRegistry.isOrderReadyForClaim(claimInfo[i].batchId)) {
-                limitOrderRegistry.claimOrder{ value: claimInfo[i].fee }(claimInfo[i].batchId, address(this));
+                (ERC20 asset, uint256 assets) = limitOrderRegistry.claimOrder{ value: claimInfo[i].fee }(
+                    claimInfo[i].batchId,
+                    address(this)
+                );
                 ownerOrders.remove(claimInfo[i].batchId);
+                if (claimToOwner) asset.safeTransfer(owner, assets);
             }
         }
+    }
+
+    function getOwnerBatchIds() external view returns (uint256[] memory ids) {
+        ids = new uint256[](ownerOrders.length());
+        for (uint256 i; i < ids.length; ++i) ids[i] = ownerOrders.at(i);
     }
 }

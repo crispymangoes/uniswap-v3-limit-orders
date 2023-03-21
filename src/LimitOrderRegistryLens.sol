@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.16;
 
 import { UniswapV3Pool } from "src/interfaces/uniswapV3/UniswapV3Pool.sol";

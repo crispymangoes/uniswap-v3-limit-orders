@@ -31,6 +31,8 @@ contract LimitOrderRegistryTest is Test {
 
     IUniswapV3Pool private USDC_WETH_05_POOL = IUniswapV3Pool(0x45dDa9cb7c25131DF268515131f647d726f50608);
 
+    address private fastGasFeed = address(0);
+
     // Token Ids for polygon block number 37834659.
     uint256 private id0 = 614120;
     uint256 private id1 = 614121;
@@ -54,7 +56,7 @@ contract LimitOrderRegistryTest is Test {
     uint256 private id19 = 614139;
 
     function setUp() external {
-        registry = new LimitOrderRegistry(address(this), positionManger, WMATIC, LINK, REGISTRAR);
+        registry = new LimitOrderRegistry(address(this), positionManger, WMATIC, LINK, REGISTRAR, fastGasFeed);
         lens = new LimitOrderRegistryLens(registry);
         registry.setMinimumAssets(1, USDC);
         registry.setMinimumAssets(1, WETH);
@@ -1282,11 +1284,7 @@ contract LimitOrderRegistryTest is Test {
         return targetTick;
     }
 
-    function _swap(
-        address[] memory path,
-        uint24[] memory poolFees,
-        uint256 amount
-    ) public returns (uint256 amountOut) {
+    function _swap(address[] memory path, uint24[] memory poolFees, uint256 amount) public returns (uint256 amountOut) {
         // Approve assets to be swapped through the router.
         ERC20(path[0]).approve(address(router), amount);
 

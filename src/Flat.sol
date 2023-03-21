@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.16;
 
 // OpenZeppelin Contracts (last updated v4.7.0) (proxy/utils/Initializable.sol)
@@ -62,7 +62,7 @@ library Address {
     function sendValue(address payable recipient, uint256 amount) internal {
         require(address(this).balance >= amount, "Address: insufficient balance");
 
-        (bool success, ) = recipient.call{value: amount}("");
+        (bool success, ) = recipient.call{ value: amount }("");
         require(success, "Address: unable to send value, recipient may have reverted");
     }
 
@@ -113,11 +113,7 @@ library Address {
      *
      * _Available since v3.1._
      */
-    function functionCallWithValue(
-        address target,
-        bytes memory data,
-        uint256 value
-    ) internal returns (bytes memory) {
+    function functionCallWithValue(address target, bytes memory data, uint256 value) internal returns (bytes memory) {
         return functionCallWithValue(target, data, value, "Address: low-level call with value failed");
     }
 
@@ -134,7 +130,7 @@ library Address {
         string memory errorMessage
     ) internal returns (bytes memory) {
         require(address(this).balance >= value, "Address: insufficient balance for call");
-        (bool success, bytes memory returndata) = target.call{value: value}(data);
+        (bool success, bytes memory returndata) = target.call{ value: value }(data);
         return verifyCallResultFromTarget(target, success, returndata, errorMessage);
     }
 
@@ -814,11 +810,7 @@ abstract contract ERC20 {
                                CONSTRUCTOR
     //////////////////////////////////////////////////////////////*/
 
-    constructor(
-        string memory _name,
-        string memory _symbol,
-        uint8 _decimals
-    ) {
+    constructor(string memory _name, string memory _symbol, uint8 _decimals) {
         name = _name;
         symbol = _symbol;
         decimals = _decimals;
@@ -853,11 +845,7 @@ abstract contract ERC20 {
         return true;
     }
 
-    function transferFrom(
-        address from,
-        address to,
-        uint256 amount
-    ) public virtual returns (bool) {
+    function transferFrom(address from, address to, uint256 amount) public virtual returns (bool) {
         uint256 allowed = allowance[from][msg.sender]; // Saves gas for limited approvals.
 
         if (allowed != type(uint256).max) allowance[from][msg.sender] = allowed - amount;
@@ -996,12 +984,7 @@ library SafeTransferLib {
                             ERC20 OPERATIONS
     //////////////////////////////////////////////////////////////*/
 
-    function safeTransferFrom(
-        ERC20 token,
-        address from,
-        address to,
-        uint256 amount
-    ) internal {
+    function safeTransferFrom(ERC20 token, address from, address to, uint256 amount) internal {
         bool success;
 
         /// @solidity memory-safe-assembly
@@ -1030,11 +1013,7 @@ library SafeTransferLib {
         require(success, "TRANSFER_FROM_FAILED");
     }
 
-    function safeTransfer(
-        ERC20 token,
-        address to,
-        uint256 amount
-    ) internal {
+    function safeTransfer(ERC20 token, address to, uint256 amount) internal {
         bool success;
 
         /// @solidity memory-safe-assembly
@@ -1062,11 +1041,7 @@ library SafeTransferLib {
         require(success, "TRANSFER_FAILED");
     }
 
-    function safeApprove(
-        ERC20 token,
-        address to,
-        uint256 amount
-    ) internal {
+    function safeApprove(ERC20 token, address to, uint256 amount) internal {
         bool success;
 
         /// @solidity memory-safe-assembly
@@ -1096,42 +1071,42 @@ library SafeTransferLib {
 }
 
 interface AutomationCompatibleInterface {
-  /**
-   * @notice method that is simulated by the keepers to see if any work actually
-   * needs to be performed. This method does does not actually need to be
-   * executable, and since it is only ever simulated it can consume lots of gas.
-   * @dev To ensure that it is never called, you may want to add the
-   * cannotExecute modifier from KeeperBase to your implementation of this
-   * method.
-   * @param checkData specified in the upkeep registration so it is always the
-   * same for a registered upkeep. This can easily be broken down into specific
-   * arguments using `abi.decode`, so multiple upkeeps can be registered on the
-   * same contract and easily differentiated by the contract.
-   * @return upkeepNeeded boolean to indicate whether the keeper should call
-   * performUpkeep or not.
-   * @return performData bytes that the keeper should call performUpkeep with, if
-   * upkeep is needed. If you would like to encode data to decode later, try
-   * `abi.encode`.
-   */
-  function checkUpkeep(bytes calldata checkData) external returns (bool upkeepNeeded, bytes memory performData);
+    /**
+     * @notice method that is simulated by the keepers to see if any work actually
+     * needs to be performed. This method does does not actually need to be
+     * executable, and since it is only ever simulated it can consume lots of gas.
+     * @dev To ensure that it is never called, you may want to add the
+     * cannotExecute modifier from KeeperBase to your implementation of this
+     * method.
+     * @param checkData specified in the upkeep registration so it is always the
+     * same for a registered upkeep. This can easily be broken down into specific
+     * arguments using `abi.decode`, so multiple upkeeps can be registered on the
+     * same contract and easily differentiated by the contract.
+     * @return upkeepNeeded boolean to indicate whether the keeper should call
+     * performUpkeep or not.
+     * @return performData bytes that the keeper should call performUpkeep with, if
+     * upkeep is needed. If you would like to encode data to decode later, try
+     * `abi.encode`.
+     */
+    function checkUpkeep(bytes calldata checkData) external returns (bool upkeepNeeded, bytes memory performData);
 
-  /**
-   * @notice method that is actually executed by the keepers, via the registry.
-   * The data returned by the checkUpkeep simulation will be passed into
-   * this method to actually be executed.
-   * @dev The input to this method should not be trusted, and the caller of the
-   * method should not even be restricted to any single registry. Anyone should
-   * be able call it, and the input should be validated, there is no guarantee
-   * that the data passed in is the performData returned from checkUpkeep. This
-   * could happen due to malicious keepers, racing keepers, or simply a state
-   * change while the performUpkeep transaction is waiting for confirmation.
-   * Always validate the data passed in.
-   * @param performData is the data which was passed back from the checkData
-   * simulation. If it is encoded, it can easily be decoded into other types by
-   * calling `abi.decode`. This data should not be trusted, and should be
-   * validated against the contract's current state.
-   */
-  function performUpkeep(bytes calldata performData) external;
+    /**
+     * @notice method that is actually executed by the keepers, via the registry.
+     * The data returned by the checkUpkeep simulation will be passed into
+     * this method to actually be executed.
+     * @dev The input to this method should not be trusted, and the caller of the
+     * method should not even be restricted to any single registry. Anyone should
+     * be able call it, and the input should be validated, there is no guarantee
+     * that the data passed in is the performData returned from checkUpkeep. This
+     * could happen due to malicious keepers, racing keepers, or simply a state
+     * change while the performUpkeep transaction is waiting for confirmation.
+     * Always validate the data passed in.
+     * @param performData is the data which was passed back from the checkData
+     * simulation. If it is encoded, it can easily be decoded into other types by
+     * calling `abi.decode`. This data should not be trusted, and should be
+     * validated against the contract's current state.
+     */
+    function performUpkeep(bytes calldata performData) external;
 }
 
 /// @notice Simple single owner authorization mixin.
@@ -1177,37 +1152,29 @@ abstract contract Owned {
 }
 
 interface LinkTokenInterface {
-  function allowance(address owner, address spender) external view returns (uint256 remaining);
+    function allowance(address owner, address spender) external view returns (uint256 remaining);
 
-  function approve(address spender, uint256 value) external returns (bool success);
+    function approve(address spender, uint256 value) external returns (bool success);
 
-  function balanceOf(address owner) external view returns (uint256 balance);
+    function balanceOf(address owner) external view returns (uint256 balance);
 
-  function decimals() external view returns (uint8 decimalPlaces);
+    function decimals() external view returns (uint8 decimalPlaces);
 
-  function decreaseApproval(address spender, uint256 addedValue) external returns (bool success);
+    function decreaseApproval(address spender, uint256 addedValue) external returns (bool success);
 
-  function increaseApproval(address spender, uint256 subtractedValue) external;
+    function increaseApproval(address spender, uint256 subtractedValue) external;
 
-  function name() external view returns (string memory tokenName);
+    function name() external view returns (string memory tokenName);
 
-  function symbol() external view returns (string memory tokenSymbol);
+    function symbol() external view returns (string memory tokenSymbol);
 
-  function totalSupply() external view returns (uint256 totalTokensIssued);
+    function totalSupply() external view returns (uint256 totalTokensIssued);
 
-  function transfer(address to, uint256 value) external returns (bool success);
+    function transfer(address to, uint256 value) external returns (bool success);
 
-  function transferAndCall(
-    address to,
-    uint256 value,
-    bytes calldata data
-  ) external returns (bool success);
+    function transferAndCall(address to, uint256 value, bytes calldata data) external returns (bool success);
 
-  function transferFrom(
-    address from,
-    address to,
-    uint256 value
-  ) external returns (bool success);
+    function transferFrom(address from, address to, uint256 value) external returns (bool success);
 }
 
 struct RegistrationParams {
@@ -1286,7 +1253,8 @@ interface UniswapV3Pool {
         uint256 paid1
     );
     event IncreaseObservationCardinalityNext(
-        uint16 observationCardinalityNextOld, uint16 observationCardinalityNextNew
+        uint16 observationCardinalityNextOld,
+        uint16 observationCardinalityNextNew
     );
     event Initialize(uint160 sqrtPriceX96, int24 tick);
     event Mint(
@@ -1309,9 +1277,8 @@ interface UniswapV3Pool {
         int24 tick
     );
 
-    function burn(int24 tickLower, int24 tickUpper, uint128 amount)
-        external
-        returns (uint256 amount0, uint256 amount1);
+    function burn(int24 tickLower, int24 tickUpper, uint128 amount) external returns (uint256 amount0, uint256 amount1);
+
     function collect(
         address recipient,
         int24 tickLower,
@@ -1319,22 +1286,42 @@ interface UniswapV3Pool {
         uint128 amount0Requested,
         uint128 amount1Requested
     ) external returns (uint128 amount0, uint128 amount1);
-    function collectProtocol(address recipient, uint128 amount0Requested, uint128 amount1Requested)
-        external
-        returns (uint128 amount0, uint128 amount1);
+
+    function collectProtocol(
+        address recipient,
+        uint128 amount0Requested,
+        uint128 amount1Requested
+    ) external returns (uint128 amount0, uint128 amount1);
+
     function factory() external view returns (address);
+
     function fee() external view returns (uint24);
+
     function feeGrowthGlobal0X128() external view returns (uint256);
+
     function feeGrowthGlobal1X128() external view returns (uint256);
+
     function flash(address recipient, uint256 amount0, uint256 amount1, bytes memory data) external;
+
     function increaseObservationCardinalityNext(uint16 observationCardinalityNext) external;
+
     function initialize(uint160 sqrtPriceX96) external;
+
     function liquidity() external view returns (uint128);
+
     function maxLiquidityPerTick() external view returns (uint128);
-    function mint(address recipient, int24 tickLower, int24 tickUpper, uint128 amount, bytes memory data)
-        external
-        returns (uint256 amount0, uint256 amount1);
-    function observations(uint256)
+
+    function mint(
+        address recipient,
+        int24 tickLower,
+        int24 tickUpper,
+        uint128 amount,
+        bytes memory data
+    ) external returns (uint256 amount0, uint256 amount1);
+
+    function observations(
+        uint256
+    )
         external
         view
         returns (
@@ -1343,11 +1330,14 @@ interface UniswapV3Pool {
             uint160 secondsPerLiquidityCumulativeX128,
             bool initialized
         );
-    function observe(uint32[] memory secondsAgos)
-        external
-        view
-        returns (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s);
-    function positions(bytes32)
+
+    function observe(
+        uint32[] memory secondsAgos
+    ) external view returns (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s);
+
+    function positions(
+        bytes32
+    )
         external
         view
         returns (
@@ -1357,8 +1347,11 @@ interface UniswapV3Pool {
             uint128 tokensOwed0,
             uint128 tokensOwed1
         );
+
     function protocolFees() external view returns (uint128 token0, uint128 token1);
+
     function setFeeProtocol(uint8 feeProtocol0, uint8 feeProtocol1) external;
+
     function slot0()
         external
         view
@@ -1371,10 +1364,12 @@ interface UniswapV3Pool {
             uint8 feeProtocol,
             bool unlocked
         );
-    function snapshotCumulativesInside(int24 tickLower, int24 tickUpper)
-        external
-        view
-        returns (int56 tickCumulativeInside, uint160 secondsPerLiquidityInsideX128, uint32 secondsInside);
+
+    function snapshotCumulativesInside(
+        int24 tickLower,
+        int24 tickUpper
+    ) external view returns (int56 tickCumulativeInside, uint160 secondsPerLiquidityInsideX128, uint32 secondsInside);
+
     function swap(
         address recipient,
         bool zeroForOne,
@@ -1382,9 +1377,14 @@ interface UniswapV3Pool {
         uint160 sqrtPriceLimitX96,
         bytes memory data
     ) external returns (int256 amount0, int256 amount1);
+
     function tickBitmap(int16) external view returns (uint256);
+
     function tickSpacing() external view returns (int24);
-    function ticks(int24)
+
+    function ticks(
+        int24
+    )
         external
         view
         returns (
@@ -1397,7 +1397,9 @@ interface UniswapV3Pool {
             uint32 secondsOutside,
             bool initialized
         );
+
     function token0() external view returns (address);
+
     function token1() external view returns (address);
 }
 
@@ -1448,39 +1450,57 @@ interface NonfungiblePositionManager {
     }
 
     function DOMAIN_SEPARATOR() external view returns (bytes32);
+
     function PERMIT_TYPEHASH() external view returns (bytes32);
+
     function WETH9() external view returns (address);
+
     function approve(address to, uint256 tokenId) external;
+
     function balanceOf(address owner) external view returns (uint256);
+
     function baseURI() external pure returns (string memory);
+
     function burn(uint256 tokenId) external payable;
+
     function collect(CollectParams memory params) external payable returns (uint256 amount0, uint256 amount1);
-    function createAndInitializePoolIfNecessary(address token0, address token1, uint24 fee, uint160 sqrtPriceX96)
-        external
-        payable
-        returns (address pool);
-    function decreaseLiquidity(DecreaseLiquidityParams memory params)
-        external
-        payable
-        returns (uint256 amount0, uint256 amount1);
+
+    function createAndInitializePoolIfNecessary(
+        address token0,
+        address token1,
+        uint24 fee,
+        uint160 sqrtPriceX96
+    ) external payable returns (address pool);
+
+    function decreaseLiquidity(
+        DecreaseLiquidityParams memory params
+    ) external payable returns (uint256 amount0, uint256 amount1);
+
     function factory() external view returns (address);
+
     function getApproved(uint256 tokenId) external view returns (address);
-    function increaseLiquidity(IncreaseLiquidityParams memory params)
-        external
-        payable
-        returns (uint128 liquidity, uint256 amount0, uint256 amount1);
+
+    function increaseLiquidity(
+        IncreaseLiquidityParams memory params
+    ) external payable returns (uint128 liquidity, uint256 amount0, uint256 amount1);
+
     function isApprovedForAll(address owner, address operator) external view returns (bool);
-    function mint(MintParams memory params)
-        external
-        payable
-        returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
+
+    function mint(
+        MintParams memory params
+    ) external payable returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
+
     function multicall(bytes[] memory data) external payable returns (bytes[] memory results);
+
     function name() external view returns (string memory);
+
     function ownerOf(uint256 tokenId) external view returns (address);
-    function permit(address spender, uint256 tokenId, uint256 deadline, uint8 v, bytes32 r, bytes32 s)
-        external
-        payable;
-    function positions(uint256 tokenId)
+
+    function permit(address spender, uint256 tokenId, uint256 deadline, uint8 v, bytes32 r, bytes32 s) external payable;
+
+    function positions(
+        uint256 tokenId
+    )
         external
         view
         returns (
@@ -1497,31 +1517,62 @@ interface NonfungiblePositionManager {
             uint128 tokensOwed0,
             uint128 tokensOwed1
         );
+
     function refundETH() external payable;
+
     function safeTransferFrom(address from, address to, uint256 tokenId) external;
+
     function safeTransferFrom(address from, address to, uint256 tokenId, bytes memory _data) external;
-    function selfPermit(address token, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s)
-        external
-        payable;
-    function selfPermitAllowed(address token, uint256 nonce, uint256 expiry, uint8 v, bytes32 r, bytes32 s)
-        external
-        payable;
-    function selfPermitAllowedIfNecessary(address token, uint256 nonce, uint256 expiry, uint8 v, bytes32 r, bytes32 s)
-        external
-        payable;
-    function selfPermitIfNecessary(address token, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s)
-        external
-        payable;
+
+    function selfPermit(address token, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s) external payable;
+
+    function selfPermitAllowed(
+        address token,
+        uint256 nonce,
+        uint256 expiry,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external payable;
+
+    function selfPermitAllowedIfNecessary(
+        address token,
+        uint256 nonce,
+        uint256 expiry,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external payable;
+
+    function selfPermitIfNecessary(
+        address token,
+        uint256 value,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external payable;
+
     function setApprovalForAll(address operator, bool approved) external;
+
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
+
     function sweepToken(address token, uint256 amountMinimum, address recipient) external payable;
+
     function symbol() external view returns (string memory);
+
     function tokenByIndex(uint256 index) external view returns (uint256);
+
     function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (uint256);
+
     function tokenURI(uint256 tokenId) external view returns (string memory);
+
     function totalSupply() external view returns (uint256);
+
     function transferFrom(address from, address to, uint256 tokenId) external;
+
     function uniswapV3MintCallback(uint256 amount0Owed, uint256 amount1Owed, bytes memory data) external;
+
     function unwrapWETH9(uint256 amountMinimum, address recipient) external payable;
 }
 
@@ -1564,12 +1615,7 @@ contract ERC721Holder is IERC721Receiver {
      *
      * Always returns `IERC721Receiver.onERC721Received.selector`.
      */
-    function onERC721Received(
-        address,
-        address,
-        uint256,
-        bytes memory
-    ) public virtual override returns (bytes4) {
+    function onERC721Received(address, address, uint256, bytes memory) public virtual override returns (bytes4) {
         return this.onERC721Received.selector;
     }
 }
@@ -2188,14 +2234,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         UniswapV3Pool pool,
         int24 targetTick,
         bool direction
-    )
-        external
-        returns (
-            uint128 amount0,
-            uint128 amount1,
-            uint128 batchId
-        )
-    {
+    ) external returns (uint128 amount0, uint128 amount1, uint128 batchId) {
         uint256 positionId;
         {
             // Make sure order is OTM.
@@ -2408,11 +2447,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
      * @notice Check if a given Uniswap V3 position is already in the `orderBook`.
      * @dev Looks at Nodes head and tail, and checks for edge case of node being the only node in the `orderBook`
      */
-    function _checkThatNodeIsInList(
-        uint256 node,
-        BatchOrder memory order,
-        PoolData memory data
-    ) internal pure {
+    function _checkThatNodeIsInList(uint256 node, BatchOrder memory order, PoolData memory data) internal pure {
         if (order.head == 0 && order.tail == 0) {
             // Possible but the order may be centerTail or centerHead.
             if (data.centerHead != node && data.centerTail != node) revert LimitOrderRegistry__OrderNotInList(node);
@@ -2545,11 +2580,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
      *         `batchIdToUserDepositAmount` mapping value.
      * @dev If user is new to the order, increment userCount.
      */
-    function _updateOrder(
-        uint256 positionId,
-        address user,
-        uint128 amount
-    ) internal returns (uint128 userTotal) {
+    function _updateOrder(uint256 positionId, address user, uint128 amount) internal returns (uint128 userTotal) {
         BatchOrder storage order = orderBook[positionId];
         if (order.direction) {
             // token1
@@ -2801,11 +2832,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
      * @notice Removes an order from the `orderBook`.
      * @dev Checks if order is one of the center values, and updates the head if need be.
      */
-    function _removeOrderFromList(
-        uint256 target,
-        UniswapV3Pool pool,
-        BatchOrder storage order
-    ) internal {
+    function _removeOrderFromList(uint256 target, UniswapV3Pool pool, BatchOrder storage order) internal {
         // Checks if order is the center, if so then it will set it to the the center orders head(which is okay if it is zero).
         uint256 centerHead = poolToData[pool].centerHead;
         uint256 centerTail = poolToData[pool].centerTail;
@@ -2936,11 +2963,7 @@ contract TradeManager is Initializable, AutomationCompatibleInterface, Owned {
         ownerOrders.add(batchId);
     }
 
-    function cancelOrder(
-        UniswapV3Pool pool,
-        int24 targetTick,
-        bool direction
-    ) external onlyOwner {
+    function cancelOrder(UniswapV3Pool pool, int24 targetTick, bool direction) external onlyOwner {
         (uint128 amount0, uint128 amount1, uint128 batchId) = limitOrderRegistry.cancelOrder(
             pool,
             targetTick,

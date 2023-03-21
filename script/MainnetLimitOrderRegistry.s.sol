@@ -15,34 +15,35 @@ import "forge-std/Script.sol";
 
 /**
  * @dev Run
- *      `source .env && forge script script/MaticLimitOrderRegistry.s.sol:MaticLimitOrderRegistryScript --rpc-url $MATIC_RPC_URL  --private-key $PRIVATE_KEY —optimize —optimizer-runs 200 --with-gas-price 300000000000 --verify --etherscan-api-key $POLYGONSCAN_KEY --broadcast --slow`
+ *      `source .env && forge script script/MainnetLimitOrderRegistry.s.sol:MainnetLimitOrderRegistryScript --rpc-url $MAINNET_RPC_URL  --private-key $PRIVATE_KEY —optimize —optimizer-runs 200 --with-gas-price 30000000000 --verify --etherscan-api-key $ETHERSCAN_KEY --broadcast --slow`
  * @dev Optionally can change `--with-gas-price` to something more reasonable
  */
-contract MaticLimitOrderRegistryScript is Script {
+contract MainnetLimitOrderRegistryScript is Script {
     LimitOrderRegistry private registry;
     LimitOrderRegistryLens private lens;
     TradeManagerFactory private factory;
     TradeManager private manager;
 
-    ERC20 private USDC = ERC20(0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174);
-    ERC20 private WETH = ERC20(0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619);
+    ERC20 private USDC = ERC20(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48);
+    ERC20 private WETH = ERC20(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
 
     address private owner = 0xf416e1FE92527c56Db9DC8Eaff7630F6e5a2E2eD;
     INonfungiblePositionManager private positionManger =
         INonfungiblePositionManager(0xC36442b4a4522E871399CD717aBDD847Ab11FE88);
 
-    ERC20 private WrappedNative = ERC20(0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270);
-    LinkTokenInterface private LINK = LinkTokenInterface(0xb0897686c545045aFc77CF20eC7A532E3120E0F1);
-    KeeperRegistrar private REGISTRAR = KeeperRegistrar(0x9a811502d843E5a03913d5A2cfb646c11463467A);
+    ERC20 private WrappedNative = ERC20(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
+    LinkTokenInterface private LINK = LinkTokenInterface(0x514910771AF9Ca656af840dff83E8264EcF986CA);
+    KeeperRegistrar private REGISTRAR = KeeperRegistrar(0xDb8e8e2ccb5C033938736aa89Fe4fa1eDfD15a1d);
 
-    IUniswapV3Pool private USDC_WETH_05_POOL = IUniswapV3Pool(0x45dDa9cb7c25131DF268515131f647d726f50608);
-    IUniswapV3Pool private WMATIC_USDC_05_POOL = IUniswapV3Pool(0xA374094527e1673A86dE625aa59517c5dE346d32);
+    IUniswapV3Pool private USDC_WETH_05_POOL = IUniswapV3Pool(0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640);
+
+    address private fastGasFeed = 0x169E633A2D1E6c10dD91238Ba11c4A708dfEF37C;
 
     function run() public {
         vm.startBroadcast();
 
         // Deploy limit order registry.
-        registry = new LimitOrderRegistry(msg.sender, positionManger, WrappedNative, LINK, REGISTRAR, address(0));
+        registry = new LimitOrderRegistry(msg.sender, positionManger, WrappedNative, LINK, REGISTRAR, fastGasFeed);
         lens = new LimitOrderRegistryLens(registry);
         TradeManager implementation = new TradeManager();
         // Initialize implementation.
@@ -55,18 +56,16 @@ contract MaticLimitOrderRegistryScript is Script {
         );
         factory = new TradeManagerFactory(address(implementation));
 
-        registry.setMinimumAssets(1, USDC);
-        registry.setMinimumAssets(1, WETH);
-        registry.setMinimumAssets(1, WrappedNative);
+        registry.setMinimumAssets(100e6, USDC);
+        registry.setMinimumAssets(0.05e18, WETH);
 
-        // Setup pools.
-        uint256 upkeepFunds = 5e18;
-        LINK.approve(address(registry), 2 * upkeepFunds);
+        // Setup pool.
+        uint256 upkeepFunds = 0;
+        // LINK.approve(address(registry), upkeepFunds);
         registry.setupLimitOrder(USDC_WETH_05_POOL, upkeepFunds);
-        registry.setupLimitOrder(WMATIC_USDC_05_POOL, upkeepFunds);
 
         // Create Trade Manager.
-        LINK.approve(address(factory), upkeepFunds);
+        // LINK.approve(address(factory), upkeepFunds);
         manager = factory.createTradeManager(registry, LINK, REGISTRAR, upkeepFunds);
 
         vm.stopBroadcast();

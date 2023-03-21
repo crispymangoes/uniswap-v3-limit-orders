@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.13;
 
 import { ERC20 } from "@solmate/tokens/ERC20.sol";
@@ -31,7 +31,7 @@ contract LimitOrderRegistryScript is Script {
         // token1 = new MockERC20("Mangoes", "M");
 
         // Deploy limit order registry.
-        registry = new LimitOrderRegistry(msg.sender, positionManger, WrappedNative, LINK, REGISTRAR);
+        registry = new LimitOrderRegistry(msg.sender, positionManger, WrappedNative, LINK, REGISTRAR, address(0));
 
         registry.setMinimumAssets(1, token0);
         registry.setMinimumAssets(1, token1);

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.16;
 
 import { ERC20 } from "@solmate/tokens/ERC20.sol";
@@ -11,10 +11,16 @@ import { ERC721Holder } from "@openzeppelin/contracts/token/ERC721/utils/ERC721H
 import { LinkTokenInterface } from "@chainlink/contracts/src/v0.8/interfaces/LinkTokenInterface.sol";
 import { IKeeperRegistrar, RegistrationParams } from "src/interfaces/chainlink/IKeeperRegistrar.sol";
 import { Context } from "@openzeppelin/contracts/utils/Context.sol";
+import { IChainlinkAggregator } from "src/interfaces/chainlink/IChainlinkAggregator.sol";
 
 /**
  * @title Limit Order Registry
  * @notice Allows users to create decentralized limit orders.
+ * @dev DO NOT PLACE LIMIT ORDERS FOR STRONGLY CORRELATED ASSETS.
+ *      - If a stable coin pair were to temporarily depeg, and a user places a limit order
+ *        whose tick range encompasses the normal trading tick, there is NO way to cancel the order
+ *        because the order is mixed. The user would have to wait for another depeg event to happen
+ *        so that the order can be fulfilled, or the order can be cancelled.
  * @author crispymangoes
  */
 contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holder, Context {
@@ -164,8 +170,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
      */
     mapping(uint128 => mapping(address => uint128)) private batchIdToUserDepositAmount;
 
-    // Orders can be reused to save on NFT space
-    // PositionId to Order
     /**
      * @notice The `orderBook` maps Uniswap V3 token ids to BatchOrder information.
      * @dev Each BatchOrder contains a head and tail value which effectively,
@@ -184,6 +188,11 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     bool public isShutdown;
 
     /**
+     * @notice Chainlink Fast Gas Feed for ETH Mainnet.
+     */
+    address public fastGasFeed = 0x169E633A2D1E6c10dD91238Ba11c4A708dfEF37C;
+
+    /**
      * @notice The max possible gas the owner can set for the gas limit.
      */
     uint32 public constant MAX_GAS_LIMIT = 500_000;
@@ -194,6 +203,9 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
      */
     uint32 public constant MAX_GAS_PRICE = 1_000;
 
+    /**
+     * @notice The max number of orders that can be fulfilled in a single upkeep TX.
+     */
     uint16 public constant MAX_FILLS_PER_UPKEEP = 20;
 
     /*//////////////////////////////////////////////////////////////
@@ -272,12 +284,14 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         NonfungiblePositionManager _positionManager,
         ERC20 wrappedNative,
         LinkTokenInterface link,
-        IKeeperRegistrar _registrar
+        IKeeperRegistrar _registrar,
+        address _fastGasFeed
     ) Owned(_owner) {
         POSITION_MANAGER = _positionManager;
         WRAPPED_NATIVE = wrappedNative;
         LINK = link;
         registrar = _registrar;
+        fastGasFeed = _fastGasFeed;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -363,6 +377,13 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     function setUpkeepGasPrice(uint32 gasPrice) external onlyOwner {
         if (gasPrice > MAX_GAS_PRICE) revert LimitOrderRegistry__InvalidGasPrice();
         upkeepGasPrice = gasPrice;
+    }
+
+    /**
+     * @notice Allows owner to set the fast gas feed.
+     */
+    function setFastGasFeed(address feed) external onlyOwner {
+        fastGasFeed = feed;
     }
 
     /**
@@ -552,7 +573,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
      * @dev Caller must either approve this contract to spend their Wrapped Native token, and have at least `getFeePerUser` tokens in their wallet.
      *      Or caller must send `getFeePerUser` value with this call.
      */
-    function claimOrder(uint128 batchId, address user) external payable returns (uint256) {
+    function claimOrder(uint128 batchId, address user) external payable returns (ERC20, uint256) {
         Claim storage userClaim = claim[batchId];
         if (!userClaim.isReadyForClaim) revert LimitOrderRegistry__OrderNotReadyToClaim(batchId);
         uint256 depositAmount = batchIdToUserDepositAmount[batchId][user];
@@ -588,9 +609,11 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             if (refund > 0) payable(sender).transfer(refund);
         } else {
             WRAPPED_NATIVE.safeTransferFrom(sender, address(this), userClaim.feePerUser);
+            // If value is non zero send it back to caller.
+            if (msg.value > 0) payable(sender).transfer(msg.value);
         }
         emit ClaimOrder(user, batchId, owed);
-        return owed;
+        return (tokenOut, owed);
     }
 
     /**
@@ -604,14 +627,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         UniswapV3Pool pool,
         int24 targetTick,
         bool direction
-    )
-        external
-        returns (
-            uint128 amount0,
-            uint128 amount1,
-            uint128 batchId
-        )
-    {
+    ) external returns (uint128 amount0, uint128 amount1, uint128 batchId) {
         uint256 positionId;
         {
             // Make sure order is OTM.
@@ -764,7 +780,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         PoolData storage data = poolToData[pool];
 
         // Estimate gas cost.
-        uint256 estimatedFee = uint256(upkeepGasLimit * upkeepGasPrice) * 1e9; // Multiply by 1e9 to convert gas price to gwei
+        uint256 estimatedFee = uint256(upkeepGasLimit * getGasPrice());
 
         (, int24 currentTick, , , , , ) = pool.slot0();
         bool orderFilled;
@@ -824,11 +840,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
      * @notice Check if a given Uniswap V3 position is already in the `orderBook`.
      * @dev Looks at Nodes head and tail, and checks for edge case of node being the only node in the `orderBook`
      */
-    function _checkThatNodeIsInList(
-        uint256 node,
-        BatchOrder memory order,
-        PoolData memory data
-    ) internal pure {
+    function _checkThatNodeIsInList(uint256 node, BatchOrder memory order, PoolData memory data) internal pure {
         if (order.head == 0 && order.tail == 0) {
             // Possible but the order may be centerTail or centerHead.
             if (data.centerHead != node && data.centerTail != node) revert LimitOrderRegistry__OrderNotInList(node);
@@ -961,11 +973,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
      *         `batchIdToUserDepositAmount` mapping value.
      * @dev If user is new to the order, increment userCount.
      */
-    function _updateOrder(
-        uint256 positionId,
-        address user,
-        uint128 amount
-    ) internal returns (uint128 userTotal) {
+    function _updateOrder(uint256 positionId, address user, uint128 amount) internal returns (uint128 userTotal) {
         BatchOrder storage order = orderBook[positionId];
         if (order.direction) {
             // token1
@@ -1217,11 +1225,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
      * @notice Removes an order from the `orderBook`.
      * @dev Checks if order is one of the center values, and updates the head if need be.
      */
-    function _removeOrderFromList(
-        uint256 target,
-        UniswapV3Pool pool,
-        BatchOrder storage order
-    ) internal {
+    function _removeOrderFromList(uint256 target, UniswapV3Pool pool, BatchOrder storage order) internal {
         // Checks if order is the center, if so then it will set it to the the center orders head(which is okay if it is zero).
         uint256 centerHead = poolToData[pool].centerHead;
         uint256 centerTail = poolToData[pool].centerTail;
@@ -1239,6 +1243,16 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         orderBook[order.head].tail = order.tail;
         order.head = 0;
         order.tail = 0;
+    }
+
+    /**
+     * @notice Helper function to get the gas price used for fee calculation.
+     */
+    function getGasPrice() public view returns (uint256) {
+        // If gas feed is set use it.
+        if (fastGasFeed != address(0)) return uint256(IChainlinkAggregator(fastGasFeed).latestAnswer());
+        // Else use owner set value.
+        return uint256(upkeepGasPrice) * 1e9; // Multiply by 1e9 to convert gas price to gwei
     }
 
     /*//////////////////////////////////////////////////////////////

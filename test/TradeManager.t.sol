@@ -58,7 +58,7 @@ contract TradeManagerTest is Test {
     uint256 private id19 = 614139;
 
     function setUp() external {
-        registry = new LimitOrderRegistry(address(this), positionManger, WMATIC, LINK, REGISTRAR);
+        registry = new LimitOrderRegistry(address(this), positionManger, WMATIC, LINK, REGISTRAR, address(0));
         registry.setMinimumAssets(1, USDC);
         registry.setMinimumAssets(1, WETH);
 
@@ -69,8 +69,6 @@ contract TradeManagerTest is Test {
         implementation = new TradeManager();
         factory = new TradeManagerFactory(address(implementation));
     }
-
-    // ========================================= INITIALIZATION TEST =========================================
 
     // ============================================= HAPPY PATH TEST =============================================
 
@@ -87,9 +85,6 @@ contract TradeManagerTest is Test {
         _createOrder(manager, address(this), USDC_WETH_05_POOL, 300, USDC, usdcAmount);
         _createOrder(manager, address(this), USDC_WETH_05_POOL, 500, USDC, usdcAmount);
 
-        // (, int24 tick, , , , , ) = USDC_WETH_05_POOL.slot0();
-        // console.log(uint24(tick));
-
         {
             address[] memory path = new address[](2);
             path[0] = address(WETH);
@@ -102,9 +97,6 @@ contract TradeManagerTest is Test {
             deal(address(WETH), address(this), swapAmount);
             _swap(path, poolFees, swapAmount);
         }
-
-        // (, int24 tick, , , , , ) = USDC_WETH_05_POOL.slot0();
-        // console.log(uint24(tick));
 
         (bool upkeepNeeded, bytes memory performData) = registry.checkUpkeep(abi.encode(USDC_WETH_05_POOL));
 
@@ -158,6 +150,171 @@ contract TradeManagerTest is Test {
         assertEq(address(this).balance - balBefore, nativeBalance, "Manager should have sent balance to user.");
     }
 
+    function testClaimOrderAndTransferToOwner() external {
+        uint96 usdcAmount = 1_000e6;
+
+        // Create a trade manager.
+        deal(address(LINK), address(this), 10e18);
+        LINK.approve(address(factory), 10e18);
+        TradeManager manager = factory.createTradeManager(registry, LINK, REGISTRAR, 10e18);
+        deal(address(manager), 1 ether);
+
+        manager.setClaimToOwner(true);
+
+        // Create a limit order through manager.
+        _createOrder(manager, address(this), USDC_WETH_05_POOL, 300, USDC, usdcAmount);
+        _createOrder(manager, address(this), USDC_WETH_05_POOL, 500, USDC, usdcAmount);
+
+        {
+            address[] memory path = new address[](2);
+            path[0] = address(WETH);
+            path[1] = address(USDC);
+
+            uint24[] memory poolFees = new uint24[](1);
+            poolFees[0] = 500;
+
+            uint256 swapAmount = 900e18;
+            deal(address(WETH), address(this), swapAmount);
+            _swap(path, poolFees, swapAmount);
+        }
+
+        (bool upkeepNeeded, bytes memory performData) = registry.checkUpkeep(abi.encode(USDC_WETH_05_POOL));
+
+        registry.performUpkeep(performData);
+
+        (upkeepNeeded, performData) = manager.checkUpkeep(abi.encode(0));
+
+        manager.performUpkeep(performData);
+        uint256 wethInManager = WETH.balanceOf(address(manager));
+        assertEq(wethInManager, 0, "Manager should have no WETH in it.");
+        assertGt(WETH.balanceOf(address(this)), 0, "User should have WETH in it.");
+    }
+
+    function testPerformUpkeepUsingWrongClaimInfo() external {
+        uint96 usdcAmount = 1_000e6;
+
+        // Create a trade manager.
+        deal(address(LINK), address(this), 10e18);
+        LINK.approve(address(factory), 10e18);
+        TradeManager manager = factory.createTradeManager(registry, LINK, REGISTRAR, 10e18);
+        deal(address(manager), 1 ether);
+
+        manager.setClaimToOwner(true);
+
+        // Create a limit order through manager.
+        _createOrder(manager, address(this), USDC_WETH_05_POOL, 300, USDC, usdcAmount);
+
+        {
+            address[] memory path = new address[](2);
+            path[0] = address(WETH);
+            path[1] = address(USDC);
+
+            uint24[] memory poolFees = new uint24[](1);
+            poolFees[0] = 500;
+
+            uint256 swapAmount = 900e18;
+            deal(address(WETH), address(this), swapAmount);
+            _swap(path, poolFees, swapAmount);
+        }
+
+        (bool upkeepNeeded, bytes memory performData) = registry.checkUpkeep(abi.encode(USDC_WETH_05_POOL));
+
+        registry.performUpkeep(performData);
+
+        (upkeepNeeded, performData) = manager.checkUpkeep(abi.encode(0));
+        TradeManager.ClaimInfo[10] memory badInfo = abi.decode(performData, (TradeManager.ClaimInfo[10]));
+        uint128 actualFee = registry.getFeePerUser(badInfo[0].batchId);
+        // Specifying a fee that is too big should revert.
+        badInfo[0].fee = 10 ether;
+        performData = abi.encode(badInfo);
+        vm.expectRevert();
+        manager.performUpkeep(performData);
+
+        // Specifying a fee that is too small should revert bc TM does not approve LOR to spend Wrapped Native.
+        badInfo[0].fee = actualFee / 2;
+        performData = abi.encode(badInfo);
+        vm.expectRevert(bytes("TRANSFER_FROM_FAILED"));
+        manager.performUpkeep(performData);
+
+        // Specifying a fee that is too big, but small enough the trade manager can cover it results in excess being sent back to TM.
+        badInfo[0].fee = actualFee * 10;
+        performData = abi.encode(badInfo);
+        manager.performUpkeep(performData);
+        assertEq(address(manager).balance, 1 ether - actualFee, "Manger should have been returned excess fee.");
+
+        // Changing batchId to an invalid one should do nothing.
+        badInfo[0].fee = actualFee;
+        badInfo[0].batchId = type(uint128).max;
+        performData = abi.encode(badInfo);
+        manager.performUpkeep(performData);
+        assertEq(address(manager).balance, 1 ether - actualFee, "Manger should be the same as before.");
+    }
+
+    function testMaxingOutClaimArray() external {
+        uint96 usdcAmount = 1_000e6;
+
+        // Create a trade manager.
+        deal(address(LINK), address(this), 10e18);
+        LINK.approve(address(factory), 10e18);
+        TradeManager manager = factory.createTradeManager(registry, LINK, REGISTRAR, 10e18);
+        deal(address(manager), 1 ether);
+
+        manager.setClaimToOwner(true);
+
+        // Create a multiple limit orders through manager.
+        int24 tickDelta = 20;
+        for (int24 i; i < 25; ++i) {
+            int24 delta = tickDelta + (i * 10);
+            _createOrder(manager, address(this), USDC_WETH_05_POOL, delta, USDC, usdcAmount);
+        }
+
+        // Owner orders should be of length 25.
+        uint256[] memory ids = manager.getOwnerBatchIds();
+        assertEq(ids.length, 25, "ids should be of length 25.");
+
+        // Price moves so all 25 orders are ITM.
+        {
+            address[] memory path = new address[](2);
+            path[0] = address(WETH);
+            path[1] = address(USDC);
+
+            uint24[] memory poolFees = new uint24[](1);
+            poolFees[0] = 500;
+
+            uint256 swapAmount = 900e18;
+            deal(address(WETH), address(this), swapAmount);
+            _swap(path, poolFees, swapAmount);
+        }
+
+        (bool upkeepNeeded, bytes memory performData) = registry.checkUpkeep(abi.encode(USDC_WETH_05_POOL));
+
+        // Call perform upkeep 3 times.
+        // Fill 10 orders.
+        registry.performUpkeep(performData);
+        // Fill 10 orders.
+        registry.performUpkeep(performData);
+        // Fill 5 orders.
+        registry.performUpkeep(performData);
+
+        (upkeepNeeded, performData) = manager.checkUpkeep(abi.encode(0));
+        manager.performUpkeep(performData);
+        // Owner orders should be of length 15.
+        ids = manager.getOwnerBatchIds();
+        assertEq(ids.length, 15, "ids should be of length 15.");
+
+        (upkeepNeeded, performData) = manager.checkUpkeep(abi.encode(0));
+        manager.performUpkeep(performData);
+        // Owner orders should be of length 5.
+        ids = manager.getOwnerBatchIds();
+        assertEq(ids.length, 5, "ids should be of length 5.");
+
+        (upkeepNeeded, performData) = manager.checkUpkeep(abi.encode(0));
+        manager.performUpkeep(performData);
+        // Owner orders should be of length 0.
+        ids = manager.getOwnerBatchIds();
+        assertEq(ids.length, 0, "ids should be of length 0.");
+    }
+
     function _createOrder(
         TradeManager manager,
         address sender,
@@ -180,11 +337,7 @@ contract TradeManagerTest is Test {
         return targetTick;
     }
 
-    function _swap(
-        address[] memory path,
-        uint24[] memory poolFees,
-        uint256 amount
-    ) public returns (uint256 amountOut) {
+    function _swap(address[] memory path, uint24[] memory poolFees, uint256 amount) public returns (uint256 amountOut) {
         // Approve assets to be swapped through the router.
         ERC20(path[0]).approve(address(router), amount);
 
