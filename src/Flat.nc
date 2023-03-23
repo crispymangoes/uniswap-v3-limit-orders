@@ -1,768 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.16;
 
-// OpenZeppelin Contracts (last updated v4.7.0) (proxy/utils/Initializable.sol)
-
-// OpenZeppelin Contracts (last updated v4.7.0) (utils/Address.sol)
-
-/**
- * @dev Collection of functions related to the address type
- */
-library Address {
-    /**
-     * @dev Returns true if `account` is a contract.
-     *
-     * [IMPORTANT]
-     * ====
-     * It is unsafe to assume that an address for which this function returns
-     * false is an externally-owned account (EOA) and not a contract.
-     *
-     * Among others, `isContract` will return false for the following
-     * types of addresses:
-     *
-     *  - an externally-owned account
-     *  - a contract in construction
-     *  - an address where a contract will be created
-     *  - an address where a contract lived, but was destroyed
-     * ====
-     *
-     * [IMPORTANT]
-     * ====
-     * You shouldn't rely on `isContract` to protect against flash loan attacks!
-     *
-     * Preventing calls from contracts is highly discouraged. It breaks composability, breaks support for smart wallets
-     * like Gnosis Safe, and does not provide security since it can be circumvented by calling from a contract
-     * constructor.
-     * ====
-     */
-    function isContract(address account) internal view returns (bool) {
-        // This method relies on extcodesize/address.code.length, which returns 0
-        // for contracts in construction, since the code is only stored at the end
-        // of the constructor execution.
-
-        return account.code.length > 0;
-    }
-
-    /**
-     * @dev Replacement for Solidity's `transfer`: sends `amount` wei to
-     * `recipient`, forwarding all available gas and reverting on errors.
-     *
-     * https://eips.ethereum.org/EIPS/eip-1884[EIP1884] increases the gas cost
-     * of certain opcodes, possibly making contracts go over the 2300 gas limit
-     * imposed by `transfer`, making them unable to receive funds via
-     * `transfer`. {sendValue} removes this limitation.
-     *
-     * https://diligence.consensys.net/posts/2019/09/stop-using-soliditys-transfer-now/[Learn more].
-     *
-     * IMPORTANT: because control is transferred to `recipient`, care must be
-     * taken to not create reentrancy vulnerabilities. Consider using
-     * {ReentrancyGuard} or the
-     * https://solidity.readthedocs.io/en/v0.5.11/security-considerations.html#use-the-checks-effects-interactions-pattern[checks-effects-interactions pattern].
-     */
-    function sendValue(address payable recipient, uint256 amount) internal {
-        require(address(this).balance >= amount, "Address: insufficient balance");
-
-        (bool success, ) = recipient.call{ value: amount }("");
-        require(success, "Address: unable to send value, recipient may have reverted");
-    }
-
-    /**
-     * @dev Performs a Solidity function call using a low level `call`. A
-     * plain `call` is an unsafe replacement for a function call: use this
-     * function instead.
-     *
-     * If `target` reverts with a revert reason, it is bubbled up by this
-     * function (like regular Solidity function calls).
-     *
-     * Returns the raw returned data. To convert to the expected return value,
-     * use https://solidity.readthedocs.io/en/latest/units-and-global-variables.html?highlight=abi.decode#abi-encoding-and-decoding-functions[`abi.decode`].
-     *
-     * Requirements:
-     *
-     * - `target` must be a contract.
-     * - calling `target` with `data` must not revert.
-     *
-     * _Available since v3.1._
-     */
-    function functionCall(address target, bytes memory data) internal returns (bytes memory) {
-        return functionCallWithValue(target, data, 0, "Address: low-level call failed");
-    }
-
-    /**
-     * @dev Same as {xref-Address-functionCall-address-bytes-}[`functionCall`], but with
-     * `errorMessage` as a fallback revert reason when `target` reverts.
-     *
-     * _Available since v3.1._
-     */
-    function functionCall(
-        address target,
-        bytes memory data,
-        string memory errorMessage
-    ) internal returns (bytes memory) {
-        return functionCallWithValue(target, data, 0, errorMessage);
-    }
-
-    /**
-     * @dev Same as {xref-Address-functionCall-address-bytes-}[`functionCall`],
-     * but also transferring `value` wei to `target`.
-     *
-     * Requirements:
-     *
-     * - the calling contract must have an ETH balance of at least `value`.
-     * - the called Solidity function must be `payable`.
-     *
-     * _Available since v3.1._
-     */
-    function functionCallWithValue(address target, bytes memory data, uint256 value) internal returns (bytes memory) {
-        return functionCallWithValue(target, data, value, "Address: low-level call with value failed");
-    }
-
-    /**
-     * @dev Same as {xref-Address-functionCallWithValue-address-bytes-uint256-}[`functionCallWithValue`], but
-     * with `errorMessage` as a fallback revert reason when `target` reverts.
-     *
-     * _Available since v3.1._
-     */
-    function functionCallWithValue(
-        address target,
-        bytes memory data,
-        uint256 value,
-        string memory errorMessage
-    ) internal returns (bytes memory) {
-        require(address(this).balance >= value, "Address: insufficient balance for call");
-        (bool success, bytes memory returndata) = target.call{ value: value }(data);
-        return verifyCallResultFromTarget(target, success, returndata, errorMessage);
-    }
-
-    /**
-     * @dev Same as {xref-Address-functionCall-address-bytes-}[`functionCall`],
-     * but performing a static call.
-     *
-     * _Available since v3.3._
-     */
-    function functionStaticCall(address target, bytes memory data) internal view returns (bytes memory) {
-        return functionStaticCall(target, data, "Address: low-level static call failed");
-    }
-
-    /**
-     * @dev Same as {xref-Address-functionCall-address-bytes-string-}[`functionCall`],
-     * but performing a static call.
-     *
-     * _Available since v3.3._
-     */
-    function functionStaticCall(
-        address target,
-        bytes memory data,
-        string memory errorMessage
-    ) internal view returns (bytes memory) {
-        (bool success, bytes memory returndata) = target.staticcall(data);
-        return verifyCallResultFromTarget(target, success, returndata, errorMessage);
-    }
-
-    /**
-     * @dev Same as {xref-Address-functionCall-address-bytes-}[`functionCall`],
-     * but performing a delegate call.
-     *
-     * _Available since v3.4._
-     */
-    function functionDelegateCall(address target, bytes memory data) internal returns (bytes memory) {
-        return functionDelegateCall(target, data, "Address: low-level delegate call failed");
-    }
-
-    /**
-     * @dev Same as {xref-Address-functionCall-address-bytes-string-}[`functionCall`],
-     * but performing a delegate call.
-     *
-     * _Available since v3.4._
-     */
-    function functionDelegateCall(
-        address target,
-        bytes memory data,
-        string memory errorMessage
-    ) internal returns (bytes memory) {
-        (bool success, bytes memory returndata) = target.delegatecall(data);
-        return verifyCallResultFromTarget(target, success, returndata, errorMessage);
-    }
-
-    /**
-     * @dev Tool to verify that a low level call to smart-contract was successful, and revert (either by bubbling
-     * the revert reason or using the provided one) in case of unsuccessful call or if target was not a contract.
-     *
-     * _Available since v4.8._
-     */
-    function verifyCallResultFromTarget(
-        address target,
-        bool success,
-        bytes memory returndata,
-        string memory errorMessage
-    ) internal view returns (bytes memory) {
-        if (success) {
-            if (returndata.length == 0) {
-                // only check isContract if the call was successful and the return data is empty
-                // otherwise we already know that it was a contract
-                require(isContract(target), "Address: call to non-contract");
-            }
-            return returndata;
-        } else {
-            _revert(returndata, errorMessage);
-        }
-    }
-
-    /**
-     * @dev Tool to verify that a low level call was successful, and revert if it wasn't, either by bubbling the
-     * revert reason or using the provided one.
-     *
-     * _Available since v4.3._
-     */
-    function verifyCallResult(
-        bool success,
-        bytes memory returndata,
-        string memory errorMessage
-    ) internal pure returns (bytes memory) {
-        if (success) {
-            return returndata;
-        } else {
-            _revert(returndata, errorMessage);
-        }
-    }
-
-    function _revert(bytes memory returndata, string memory errorMessage) private pure {
-        // Look for revert reason and bubble it up if present
-        if (returndata.length > 0) {
-            // The easiest way to bubble the revert reason is using memory via assembly
-            /// @solidity memory-safe-assembly
-            assembly {
-                let returndata_size := mload(returndata)
-                revert(add(32, returndata), returndata_size)
-            }
-        } else {
-            revert(errorMessage);
-        }
-    }
-}
-
-/**
- * @dev This is a base contract to aid in writing upgradeable contracts, or any kind of contract that will be deployed
- * behind a proxy. Since proxied contracts do not make use of a constructor, it's common to move constructor logic to an
- * external initializer function, usually called `initialize`. It then becomes necessary to protect this initializer
- * function so it can only be called once. The {initializer} modifier provided by this contract will have this effect.
- *
- * The initialization functions use a version number. Once a version number is used, it is consumed and cannot be
- * reused. This mechanism prevents re-execution of each "step" but allows the creation of new initialization steps in
- * case an upgrade adds a module that needs to be initialized.
- *
- * For example:
- *
- * [.hljs-theme-light.nopadding]
- * ```
- * contract MyToken is ERC20Upgradeable {
- *     function initialize() initializer public {
- *         __ERC20_init("MyToken", "MTK");
- *     }
- * }
- * contract MyTokenV2 is MyToken, ERC20PermitUpgradeable {
- *     function initializeV2() reinitializer(2) public {
- *         __ERC20Permit_init("MyToken");
- *     }
- * }
- * ```
- *
- * TIP: To avoid leaving the proxy in an uninitialized state, the initializer function should be called as early as
- * possible by providing the encoded function call as the `_data` argument to {ERC1967Proxy-constructor}.
- *
- * CAUTION: When used with inheritance, manual care must be taken to not invoke a parent initializer twice, or to ensure
- * that all initializers are idempotent. This is not verified automatically as constructors are by Solidity.
- *
- * [CAUTION]
- * ====
- * Avoid leaving a contract uninitialized.
- *
- * An uninitialized contract can be taken over by an attacker. This applies to both a proxy and its implementation
- * contract, which may impact the proxy. To prevent the implementation contract from being used, you should invoke
- * the {_disableInitializers} function in the constructor to automatically lock it when it is deployed:
- *
- * [.hljs-theme-light.nopadding]
- * ```
- * /// @custom:oz-upgrades-unsafe-allow constructor
- * constructor() {
- *     _disableInitializers();
- * }
- * ```
- * ====
- */
-abstract contract Initializable {
-    /**
-     * @dev Indicates that the contract has been initialized.
-     * @custom:oz-retyped-from bool
-     */
-    uint8 private _initialized;
-
-    /**
-     * @dev Indicates that the contract is in the process of being initialized.
-     */
-    bool private _initializing;
-
-    /**
-     * @dev Triggered when the contract has been initialized or reinitialized.
-     */
-    event Initialized(uint8 version);
-
-    /**
-     * @dev A modifier that defines a protected initializer function that can be invoked at most once. In its scope,
-     * `onlyInitializing` functions can be used to initialize parent contracts. Equivalent to `reinitializer(1)`.
-     */
-    modifier initializer() {
-        bool isTopLevelCall = !_initializing;
-        require(
-            (isTopLevelCall && _initialized < 1) || (!Address.isContract(address(this)) && _initialized == 1),
-            "Initializable: contract is already initialized"
-        );
-        _initialized = 1;
-        if (isTopLevelCall) {
-            _initializing = true;
-        }
-        _;
-        if (isTopLevelCall) {
-            _initializing = false;
-            emit Initialized(1);
-        }
-    }
-
-    /**
-     * @dev A modifier that defines a protected reinitializer function that can be invoked at most once, and only if the
-     * contract hasn't been initialized to a greater version before. In its scope, `onlyInitializing` functions can be
-     * used to initialize parent contracts.
-     *
-     * `initializer` is equivalent to `reinitializer(1)`, so a reinitializer may be used after the original
-     * initialization step. This is essential to configure modules that are added through upgrades and that require
-     * initialization.
-     *
-     * Note that versions can jump in increments greater than 1; this implies that if multiple reinitializers coexist in
-     * a contract, executing them in the right order is up to the developer or operator.
-     */
-    modifier reinitializer(uint8 version) {
-        require(!_initializing && _initialized < version, "Initializable: contract is already initialized");
-        _initialized = version;
-        _initializing = true;
-        _;
-        _initializing = false;
-        emit Initialized(version);
-    }
-
-    /**
-     * @dev Modifier to protect an initialization function so that it can only be invoked by functions with the
-     * {initializer} and {reinitializer} modifiers, directly or indirectly.
-     */
-    modifier onlyInitializing() {
-        require(_initializing, "Initializable: contract is not initializing");
-        _;
-    }
-
-    /**
-     * @dev Locks the contract, preventing any future reinitialization. This cannot be part of an initializer call.
-     * Calling this in the constructor of a contract will prevent that contract from being initialized or reinitialized
-     * to any version. It is recommended to use this to lock implementation contracts that are designed to be called
-     * through proxies.
-     */
-    function _disableInitializers() internal virtual {
-        require(!_initializing, "Initializable: contract is initializing");
-        if (_initialized < type(uint8).max) {
-            _initialized = type(uint8).max;
-            emit Initialized(type(uint8).max);
-        }
-    }
-
-    /**
-     * @dev Internal function that returns the initialized version. Returns `_initialized`
-     */
-    function _getInitializedVersion() internal view returns (uint8) {
-        return _initialized;
-    }
-
-    /**
-     * @dev Internal function that returns the initialized version. Returns `_initializing`
-     */
-    function _isInitializing() internal view returns (bool) {
-        return _initializing;
-    }
-}
-
-// OpenZeppelin Contracts (last updated v4.7.0) (utils/structs/EnumerableSet.sol)
-// This file was procedurally generated from scripts/generate/templates/EnumerableSet.js.
-
-/**
- * @dev Library for managing
- * https://en.wikipedia.org/wiki/Set_(abstract_data_type)[sets] of primitive
- * types.
- *
- * Sets have the following properties:
- *
- * - Elements are added, removed, and checked for existence in constant time
- * (O(1)).
- * - Elements are enumerated in O(n). No guarantees are made on the ordering.
- *
- * ```
- * contract Example {
- *     // Add the library methods
- *     using EnumerableSet for EnumerableSet.AddressSet;
- *
- *     // Declare a set state variable
- *     EnumerableSet.AddressSet private mySet;
- * }
- * ```
- *
- * As of v3.3.0, sets of type `bytes32` (`Bytes32Set`), `address` (`AddressSet`)
- * and `uint256` (`UintSet`) are supported.
- *
- * [WARNING]
- * ====
- * Trying to delete such a structure from storage will likely result in data corruption, rendering the structure
- * unusable.
- * See https://github.com/ethereum/solidity/pull/11843[ethereum/solidity#11843] for more info.
- *
- * In order to clean an EnumerableSet, you can either remove all elements one by one or create a fresh instance using an
- * array of EnumerableSet.
- * ====
- */
-library EnumerableSet {
-    // To implement this library for multiple types with as little code
-    // repetition as possible, we write it in terms of a generic Set type with
-    // bytes32 values.
-    // The Set implementation uses private functions, and user-facing
-    // implementations (such as AddressSet) are just wrappers around the
-    // underlying Set.
-    // This means that we can only create new EnumerableSets for types that fit
-    // in bytes32.
-
-    struct Set {
-        // Storage of set values
-        bytes32[] _values;
-        // Position of the value in the `values` array, plus 1 because index 0
-        // means a value is not in the set.
-        mapping(bytes32 => uint256) _indexes;
-    }
-
-    /**
-     * @dev Add a value to a set. O(1).
-     *
-     * Returns true if the value was added to the set, that is if it was not
-     * already present.
-     */
-    function _add(Set storage set, bytes32 value) private returns (bool) {
-        if (!_contains(set, value)) {
-            set._values.push(value);
-            // The value is stored at length-1, but we add 1 to all indexes
-            // and use 0 as a sentinel value
-            set._indexes[value] = set._values.length;
-            return true;
-        } else {
-            return false;
-        }
-    }
-
-    /**
-     * @dev Removes a value from a set. O(1).
-     *
-     * Returns true if the value was removed from the set, that is if it was
-     * present.
-     */
-    function _remove(Set storage set, bytes32 value) private returns (bool) {
-        // We read and store the value's index to prevent multiple reads from the same storage slot
-        uint256 valueIndex = set._indexes[value];
-
-        if (valueIndex != 0) {
-            // Equivalent to contains(set, value)
-            // To delete an element from the _values array in O(1), we swap the element to delete with the last one in
-            // the array, and then remove the last element (sometimes called as 'swap and pop').
-            // This modifies the order of the array, as noted in {at}.
-
-            uint256 toDeleteIndex = valueIndex - 1;
-            uint256 lastIndex = set._values.length - 1;
-
-            if (lastIndex != toDeleteIndex) {
-                bytes32 lastValue = set._values[lastIndex];
-
-                // Move the last value to the index where the value to delete is
-                set._values[toDeleteIndex] = lastValue;
-                // Update the index for the moved value
-                set._indexes[lastValue] = valueIndex; // Replace lastValue's index to valueIndex
-            }
-
-            // Delete the slot where the moved value was stored
-            set._values.pop();
-
-            // Delete the index for the deleted slot
-            delete set._indexes[value];
-
-            return true;
-        } else {
-            return false;
-        }
-    }
-
-    /**
-     * @dev Returns true if the value is in the set. O(1).
-     */
-    function _contains(Set storage set, bytes32 value) private view returns (bool) {
-        return set._indexes[value] != 0;
-    }
-
-    /**
-     * @dev Returns the number of values on the set. O(1).
-     */
-    function _length(Set storage set) private view returns (uint256) {
-        return set._values.length;
-    }
-
-    /**
-     * @dev Returns the value stored at position `index` in the set. O(1).
-     *
-     * Note that there are no guarantees on the ordering of values inside the
-     * array, and it may change when more values are added or removed.
-     *
-     * Requirements:
-     *
-     * - `index` must be strictly less than {length}.
-     */
-    function _at(Set storage set, uint256 index) private view returns (bytes32) {
-        return set._values[index];
-    }
-
-    /**
-     * @dev Return the entire set in an array
-     *
-     * WARNING: This operation will copy the entire storage to memory, which can be quite expensive. This is designed
-     * to mostly be used by view accessors that are queried without any gas fees. Developers should keep in mind that
-     * this function has an unbounded cost, and using it as part of a state-changing function may render the function
-     * uncallable if the set grows to a point where copying to memory consumes too much gas to fit in a block.
-     */
-    function _values(Set storage set) private view returns (bytes32[] memory) {
-        return set._values;
-    }
-
-    // Bytes32Set
-
-    struct Bytes32Set {
-        Set _inner;
-    }
-
-    /**
-     * @dev Add a value to a set. O(1).
-     *
-     * Returns true if the value was added to the set, that is if it was not
-     * already present.
-     */
-    function add(Bytes32Set storage set, bytes32 value) internal returns (bool) {
-        return _add(set._inner, value);
-    }
-
-    /**
-     * @dev Removes a value from a set. O(1).
-     *
-     * Returns true if the value was removed from the set, that is if it was
-     * present.
-     */
-    function remove(Bytes32Set storage set, bytes32 value) internal returns (bool) {
-        return _remove(set._inner, value);
-    }
-
-    /**
-     * @dev Returns true if the value is in the set. O(1).
-     */
-    function contains(Bytes32Set storage set, bytes32 value) internal view returns (bool) {
-        return _contains(set._inner, value);
-    }
-
-    /**
-     * @dev Returns the number of values in the set. O(1).
-     */
-    function length(Bytes32Set storage set) internal view returns (uint256) {
-        return _length(set._inner);
-    }
-
-    /**
-     * @dev Returns the value stored at position `index` in the set. O(1).
-     *
-     * Note that there are no guarantees on the ordering of values inside the
-     * array, and it may change when more values are added or removed.
-     *
-     * Requirements:
-     *
-     * - `index` must be strictly less than {length}.
-     */
-    function at(Bytes32Set storage set, uint256 index) internal view returns (bytes32) {
-        return _at(set._inner, index);
-    }
-
-    /**
-     * @dev Return the entire set in an array
-     *
-     * WARNING: This operation will copy the entire storage to memory, which can be quite expensive. This is designed
-     * to mostly be used by view accessors that are queried without any gas fees. Developers should keep in mind that
-     * this function has an unbounded cost, and using it as part of a state-changing function may render the function
-     * uncallable if the set grows to a point where copying to memory consumes too much gas to fit in a block.
-     */
-    function values(Bytes32Set storage set) internal view returns (bytes32[] memory) {
-        bytes32[] memory store = _values(set._inner);
-        bytes32[] memory result;
-
-        /// @solidity memory-safe-assembly
-        assembly {
-            result := store
-        }
-
-        return result;
-    }
-
-    // AddressSet
-
-    struct AddressSet {
-        Set _inner;
-    }
-
-    /**
-     * @dev Add a value to a set. O(1).
-     *
-     * Returns true if the value was added to the set, that is if it was not
-     * already present.
-     */
-    function add(AddressSet storage set, address value) internal returns (bool) {
-        return _add(set._inner, bytes32(uint256(uint160(value))));
-    }
-
-    /**
-     * @dev Removes a value from a set. O(1).
-     *
-     * Returns true if the value was removed from the set, that is if it was
-     * present.
-     */
-    function remove(AddressSet storage set, address value) internal returns (bool) {
-        return _remove(set._inner, bytes32(uint256(uint160(value))));
-    }
-
-    /**
-     * @dev Returns true if the value is in the set. O(1).
-     */
-    function contains(AddressSet storage set, address value) internal view returns (bool) {
-        return _contains(set._inner, bytes32(uint256(uint160(value))));
-    }
-
-    /**
-     * @dev Returns the number of values in the set. O(1).
-     */
-    function length(AddressSet storage set) internal view returns (uint256) {
-        return _length(set._inner);
-    }
-
-    /**
-     * @dev Returns the value stored at position `index` in the set. O(1).
-     *
-     * Note that there are no guarantees on the ordering of values inside the
-     * array, and it may change when more values are added or removed.
-     *
-     * Requirements:
-     *
-     * - `index` must be strictly less than {length}.
-     */
-    function at(AddressSet storage set, uint256 index) internal view returns (address) {
-        return address(uint160(uint256(_at(set._inner, index))));
-    }
-
-    /**
-     * @dev Return the entire set in an array
-     *
-     * WARNING: This operation will copy the entire storage to memory, which can be quite expensive. This is designed
-     * to mostly be used by view accessors that are queried without any gas fees. Developers should keep in mind that
-     * this function has an unbounded cost, and using it as part of a state-changing function may render the function
-     * uncallable if the set grows to a point where copying to memory consumes too much gas to fit in a block.
-     */
-    function values(AddressSet storage set) internal view returns (address[] memory) {
-        bytes32[] memory store = _values(set._inner);
-        address[] memory result;
-
-        /// @solidity memory-safe-assembly
-        assembly {
-            result := store
-        }
-
-        return result;
-    }
-
-    // UintSet
-
-    struct UintSet {
-        Set _inner;
-    }
-
-    /**
-     * @dev Add a value to a set. O(1).
-     *
-     * Returns true if the value was added to the set, that is if it was not
-     * already present.
-     */
-    function add(UintSet storage set, uint256 value) internal returns (bool) {
-        return _add(set._inner, bytes32(value));
-    }
-
-    /**
-     * @dev Removes a value from a set. O(1).
-     *
-     * Returns true if the value was removed from the set, that is if it was
-     * present.
-     */
-    function remove(UintSet storage set, uint256 value) internal returns (bool) {
-        return _remove(set._inner, bytes32(value));
-    }
-
-    /**
-     * @dev Returns true if the value is in the set. O(1).
-     */
-    function contains(UintSet storage set, uint256 value) internal view returns (bool) {
-        return _contains(set._inner, bytes32(value));
-    }
-
-    /**
-     * @dev Returns the number of values in the set. O(1).
-     */
-    function length(UintSet storage set) internal view returns (uint256) {
-        return _length(set._inner);
-    }
-
-    /**
-     * @dev Returns the value stored at position `index` in the set. O(1).
-     *
-     * Note that there are no guarantees on the ordering of values inside the
-     * array, and it may change when more values are added or removed.
-     *
-     * Requirements:
-     *
-     * - `index` must be strictly less than {length}.
-     */
-    function at(UintSet storage set, uint256 index) internal view returns (uint256) {
-        return uint256(_at(set._inner, index));
-    }
-
-    /**
-     * @dev Return the entire set in an array
-     *
-     * WARNING: This operation will copy the entire storage to memory, which can be quite expensive. This is designed
-     * to mostly be used by view accessors that are queried without any gas fees. Developers should keep in mind that
-     * this function has an unbounded cost, and using it as part of a state-changing function may render the function
-     * uncallable if the set grows to a point where copying to memory consumes too much gas to fit in a block.
-     */
-    function values(UintSet storage set) internal view returns (uint256[] memory) {
-        bytes32[] memory store = _values(set._inner);
-        uint256[] memory result;
-
-        /// @solidity memory-safe-assembly
-        assembly {
-            result := store
-        }
-
-        return result;
-    }
-}
-
 /// @notice Modern and gas efficient ERC20 + EIP-2612 implementation.
 /// @author Solmate (https://github.com/transmissions11/solmate/blob/main/src/tokens/ERC20.sol)
 /// @author Modified from Uniswap (https://github.com/Uniswap/uniswap-v2-core/blob/master/contracts/UniswapV2ERC20.sol)
@@ -810,7 +48,11 @@ abstract contract ERC20 {
                                CONSTRUCTOR
     //////////////////////////////////////////////////////////////*/
 
-    constructor(string memory _name, string memory _symbol, uint8 _decimals) {
+    constructor(
+        string memory _name,
+        string memory _symbol,
+        uint8 _decimals
+    ) {
         name = _name;
         symbol = _symbol;
         decimals = _decimals;
@@ -845,7 +87,11 @@ abstract contract ERC20 {
         return true;
     }
 
-    function transferFrom(address from, address to, uint256 amount) public virtual returns (bool) {
+    function transferFrom(
+        address from,
+        address to,
+        uint256 amount
+    ) public virtual returns (bool) {
         uint256 allowed = allowance[from][msg.sender]; // Saves gas for limited approvals.
 
         if (allowed != type(uint256).max) allowance[from][msg.sender] = allowed - amount;
@@ -984,7 +230,12 @@ library SafeTransferLib {
                             ERC20 OPERATIONS
     //////////////////////////////////////////////////////////////*/
 
-    function safeTransferFrom(ERC20 token, address from, address to, uint256 amount) internal {
+    function safeTransferFrom(
+        ERC20 token,
+        address from,
+        address to,
+        uint256 amount
+    ) internal {
         bool success;
 
         /// @solidity memory-safe-assembly
@@ -1013,7 +264,11 @@ library SafeTransferLib {
         require(success, "TRANSFER_FROM_FAILED");
     }
 
-    function safeTransfer(ERC20 token, address to, uint256 amount) internal {
+    function safeTransfer(
+        ERC20 token,
+        address to,
+        uint256 amount
+    ) internal {
         bool success;
 
         /// @solidity memory-safe-assembly
@@ -1041,7 +296,11 @@ library SafeTransferLib {
         require(success, "TRANSFER_FAILED");
     }
 
-    function safeApprove(ERC20 token, address to, uint256 amount) internal {
+    function safeApprove(
+        ERC20 token,
+        address to,
+        uint256 amount
+    ) internal {
         bool success;
 
         /// @solidity memory-safe-assembly
@@ -1071,42 +330,42 @@ library SafeTransferLib {
 }
 
 interface AutomationCompatibleInterface {
-    /**
-     * @notice method that is simulated by the keepers to see if any work actually
-     * needs to be performed. This method does does not actually need to be
-     * executable, and since it is only ever simulated it can consume lots of gas.
-     * @dev To ensure that it is never called, you may want to add the
-     * cannotExecute modifier from KeeperBase to your implementation of this
-     * method.
-     * @param checkData specified in the upkeep registration so it is always the
-     * same for a registered upkeep. This can easily be broken down into specific
-     * arguments using `abi.decode`, so multiple upkeeps can be registered on the
-     * same contract and easily differentiated by the contract.
-     * @return upkeepNeeded boolean to indicate whether the keeper should call
-     * performUpkeep or not.
-     * @return performData bytes that the keeper should call performUpkeep with, if
-     * upkeep is needed. If you would like to encode data to decode later, try
-     * `abi.encode`.
-     */
-    function checkUpkeep(bytes calldata checkData) external returns (bool upkeepNeeded, bytes memory performData);
+  /**
+   * @notice method that is simulated by the keepers to see if any work actually
+   * needs to be performed. This method does does not actually need to be
+   * executable, and since it is only ever simulated it can consume lots of gas.
+   * @dev To ensure that it is never called, you may want to add the
+   * cannotExecute modifier from KeeperBase to your implementation of this
+   * method.
+   * @param checkData specified in the upkeep registration so it is always the
+   * same for a registered upkeep. This can easily be broken down into specific
+   * arguments using `abi.decode`, so multiple upkeeps can be registered on the
+   * same contract and easily differentiated by the contract.
+   * @return upkeepNeeded boolean to indicate whether the keeper should call
+   * performUpkeep or not.
+   * @return performData bytes that the keeper should call performUpkeep with, if
+   * upkeep is needed. If you would like to encode data to decode later, try
+   * `abi.encode`.
+   */
+  function checkUpkeep(bytes calldata checkData) external returns (bool upkeepNeeded, bytes memory performData);
 
-    /**
-     * @notice method that is actually executed by the keepers, via the registry.
-     * The data returned by the checkUpkeep simulation will be passed into
-     * this method to actually be executed.
-     * @dev The input to this method should not be trusted, and the caller of the
-     * method should not even be restricted to any single registry. Anyone should
-     * be able call it, and the input should be validated, there is no guarantee
-     * that the data passed in is the performData returned from checkUpkeep. This
-     * could happen due to malicious keepers, racing keepers, or simply a state
-     * change while the performUpkeep transaction is waiting for confirmation.
-     * Always validate the data passed in.
-     * @param performData is the data which was passed back from the checkData
-     * simulation. If it is encoded, it can easily be decoded into other types by
-     * calling `abi.decode`. This data should not be trusted, and should be
-     * validated against the contract's current state.
-     */
-    function performUpkeep(bytes calldata performData) external;
+  /**
+   * @notice method that is actually executed by the keepers, via the registry.
+   * The data returned by the checkUpkeep simulation will be passed into
+   * this method to actually be executed.
+   * @dev The input to this method should not be trusted, and the caller of the
+   * method should not even be restricted to any single registry. Anyone should
+   * be able call it, and the input should be validated, there is no guarantee
+   * that the data passed in is the performData returned from checkUpkeep. This
+   * could happen due to malicious keepers, racing keepers, or simply a state
+   * change while the performUpkeep transaction is waiting for confirmation.
+   * Always validate the data passed in.
+   * @param performData is the data which was passed back from the checkData
+   * simulation. If it is encoded, it can easily be decoded into other types by
+   * calling `abi.decode`. This data should not be trusted, and should be
+   * validated against the contract's current state.
+   */
+  function performUpkeep(bytes calldata performData) external;
 }
 
 /// @notice Simple single owner authorization mixin.
@@ -1151,30 +410,353 @@ abstract contract Owned {
     }
 }
 
+interface UniswapV3Pool {
+    event Burn(
+        address indexed owner,
+        int24 indexed tickLower,
+        int24 indexed tickUpper,
+        uint128 amount,
+        uint256 amount0,
+        uint256 amount1
+    );
+    event Collect(
+        address indexed owner,
+        address recipient,
+        int24 indexed tickLower,
+        int24 indexed tickUpper,
+        uint128 amount0,
+        uint128 amount1
+    );
+    event CollectProtocol(address indexed sender, address indexed recipient, uint128 amount0, uint128 amount1);
+    event Flash(
+        address indexed sender,
+        address indexed recipient,
+        uint256 amount0,
+        uint256 amount1,
+        uint256 paid0,
+        uint256 paid1
+    );
+    event IncreaseObservationCardinalityNext(
+        uint16 observationCardinalityNextOld, uint16 observationCardinalityNextNew
+    );
+    event Initialize(uint160 sqrtPriceX96, int24 tick);
+    event Mint(
+        address sender,
+        address indexed owner,
+        int24 indexed tickLower,
+        int24 indexed tickUpper,
+        uint128 amount,
+        uint256 amount0,
+        uint256 amount1
+    );
+    event SetFeeProtocol(uint8 feeProtocol0Old, uint8 feeProtocol1Old, uint8 feeProtocol0New, uint8 feeProtocol1New);
+    event Swap(
+        address indexed sender,
+        address indexed recipient,
+        int256 amount0,
+        int256 amount1,
+        uint160 sqrtPriceX96,
+        uint128 liquidity,
+        int24 tick
+    );
+
+    function burn(int24 tickLower, int24 tickUpper, uint128 amount)
+        external
+        returns (uint256 amount0, uint256 amount1);
+    function collect(
+        address recipient,
+        int24 tickLower,
+        int24 tickUpper,
+        uint128 amount0Requested,
+        uint128 amount1Requested
+    ) external returns (uint128 amount0, uint128 amount1);
+    function collectProtocol(address recipient, uint128 amount0Requested, uint128 amount1Requested)
+        external
+        returns (uint128 amount0, uint128 amount1);
+    function factory() external view returns (address);
+    function fee() external view returns (uint24);
+    function feeGrowthGlobal0X128() external view returns (uint256);
+    function feeGrowthGlobal1X128() external view returns (uint256);
+    function flash(address recipient, uint256 amount0, uint256 amount1, bytes memory data) external;
+    function increaseObservationCardinalityNext(uint16 observationCardinalityNext) external;
+    function initialize(uint160 sqrtPriceX96) external;
+    function liquidity() external view returns (uint128);
+    function maxLiquidityPerTick() external view returns (uint128);
+    function mint(address recipient, int24 tickLower, int24 tickUpper, uint128 amount, bytes memory data)
+        external
+        returns (uint256 amount0, uint256 amount1);
+    function observations(uint256)
+        external
+        view
+        returns (
+            uint32 blockTimestamp,
+            int56 tickCumulative,
+            uint160 secondsPerLiquidityCumulativeX128,
+            bool initialized
+        );
+    function observe(uint32[] memory secondsAgos)
+        external
+        view
+        returns (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s);
+    function positions(bytes32)
+        external
+        view
+        returns (
+            uint128 liquidity,
+            uint256 feeGrowthInside0LastX128,
+            uint256 feeGrowthInside1LastX128,
+            uint128 tokensOwed0,
+            uint128 tokensOwed1
+        );
+    function protocolFees() external view returns (uint128 token0, uint128 token1);
+    function setFeeProtocol(uint8 feeProtocol0, uint8 feeProtocol1) external;
+    function slot0()
+        external
+        view
+        returns (
+            uint160 sqrtPriceX96,
+            int24 tick,
+            uint16 observationIndex,
+            uint16 observationCardinality,
+            uint16 observationCardinalityNext,
+            uint8 feeProtocol,
+            bool unlocked
+        );
+    function snapshotCumulativesInside(int24 tickLower, int24 tickUpper)
+        external
+        view
+        returns (int56 tickCumulativeInside, uint160 secondsPerLiquidityInsideX128, uint32 secondsInside);
+    function swap(
+        address recipient,
+        bool zeroForOne,
+        int256 amountSpecified,
+        uint160 sqrtPriceLimitX96,
+        bytes memory data
+    ) external returns (int256 amount0, int256 amount1);
+    function tickBitmap(int16) external view returns (uint256);
+    function tickSpacing() external view returns (int24);
+    function ticks(int24)
+        external
+        view
+        returns (
+            uint128 liquidityGross,
+            int128 liquidityNet,
+            uint256 feeGrowthOutside0X128,
+            uint256 feeGrowthOutside1X128,
+            int56 tickCumulativeOutside,
+            uint160 secondsPerLiquidityOutsideX128,
+            uint32 secondsOutside,
+            bool initialized
+        );
+    function token0() external view returns (address);
+    function token1() external view returns (address);
+}
+
+interface NonfungiblePositionManager {
+    event Approval(address indexed owner, address indexed approved, uint256 indexed tokenId);
+    event ApprovalForAll(address indexed owner, address indexed operator, bool approved);
+    event Collect(uint256 indexed tokenId, address recipient, uint256 amount0, uint256 amount1);
+    event DecreaseLiquidity(uint256 indexed tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
+    event IncreaseLiquidity(uint256 indexed tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
+    event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
+
+    struct CollectParams {
+        uint256 tokenId;
+        address recipient;
+        uint128 amount0Max;
+        uint128 amount1Max;
+    }
+
+    struct DecreaseLiquidityParams {
+        uint256 tokenId;
+        uint128 liquidity;
+        uint256 amount0Min;
+        uint256 amount1Min;
+        uint256 deadline;
+    }
+
+    struct IncreaseLiquidityParams {
+        uint256 tokenId;
+        uint256 amount0Desired;
+        uint256 amount1Desired;
+        uint256 amount0Min;
+        uint256 amount1Min;
+        uint256 deadline;
+    }
+
+    struct MintParams {
+        address token0;
+        address token1;
+        uint24 fee;
+        int24 tickLower;
+        int24 tickUpper;
+        uint256 amount0Desired;
+        uint256 amount1Desired;
+        uint256 amount0Min;
+        uint256 amount1Min;
+        address recipient;
+        uint256 deadline;
+    }
+
+    function DOMAIN_SEPARATOR() external view returns (bytes32);
+    function PERMIT_TYPEHASH() external view returns (bytes32);
+    function WETH9() external view returns (address);
+    function approve(address to, uint256 tokenId) external;
+    function balanceOf(address owner) external view returns (uint256);
+    function baseURI() external pure returns (string memory);
+    function burn(uint256 tokenId) external payable;
+    function collect(CollectParams memory params) external payable returns (uint256 amount0, uint256 amount1);
+    function createAndInitializePoolIfNecessary(address token0, address token1, uint24 fee, uint160 sqrtPriceX96)
+        external
+        payable
+        returns (address pool);
+    function decreaseLiquidity(DecreaseLiquidityParams memory params)
+        external
+        payable
+        returns (uint256 amount0, uint256 amount1);
+    function factory() external view returns (address);
+    function getApproved(uint256 tokenId) external view returns (address);
+    function increaseLiquidity(IncreaseLiquidityParams memory params)
+        external
+        payable
+        returns (uint128 liquidity, uint256 amount0, uint256 amount1);
+    function isApprovedForAll(address owner, address operator) external view returns (bool);
+    function mint(MintParams memory params)
+        external
+        payable
+        returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
+    function multicall(bytes[] memory data) external payable returns (bytes[] memory results);
+    function name() external view returns (string memory);
+    function ownerOf(uint256 tokenId) external view returns (address);
+    function permit(address spender, uint256 tokenId, uint256 deadline, uint8 v, bytes32 r, bytes32 s)
+        external
+        payable;
+    function positions(uint256 tokenId)
+        external
+        view
+        returns (
+            uint96 nonce,
+            address operator,
+            address token0,
+            address token1,
+            uint24 fee,
+            int24 tickLower,
+            int24 tickUpper,
+            uint128 liquidity,
+            uint256 feeGrowthInside0LastX128,
+            uint256 feeGrowthInside1LastX128,
+            uint128 tokensOwed0,
+            uint128 tokensOwed1
+        );
+    function refundETH() external payable;
+    function safeTransferFrom(address from, address to, uint256 tokenId) external;
+    function safeTransferFrom(address from, address to, uint256 tokenId, bytes memory _data) external;
+    function selfPermit(address token, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s)
+        external
+        payable;
+    function selfPermitAllowed(address token, uint256 nonce, uint256 expiry, uint8 v, bytes32 r, bytes32 s)
+        external
+        payable;
+    function selfPermitAllowedIfNecessary(address token, uint256 nonce, uint256 expiry, uint8 v, bytes32 r, bytes32 s)
+        external
+        payable;
+    function selfPermitIfNecessary(address token, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s)
+        external
+        payable;
+    function setApprovalForAll(address operator, bool approved) external;
+    function supportsInterface(bytes4 interfaceId) external view returns (bool);
+    function sweepToken(address token, uint256 amountMinimum, address recipient) external payable;
+    function symbol() external view returns (string memory);
+    function tokenByIndex(uint256 index) external view returns (uint256);
+    function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (uint256);
+    function tokenURI(uint256 tokenId) external view returns (string memory);
+    function totalSupply() external view returns (uint256);
+    function transferFrom(address from, address to, uint256 tokenId) external;
+    function uniswapV3MintCallback(uint256 amount0Owed, uint256 amount1Owed, bytes memory data) external;
+    function unwrapWETH9(uint256 amountMinimum, address recipient) external payable;
+}
+
+// OpenZeppelin Contracts v4.4.1 (token/ERC721/utils/ERC721Holder.sol)
+
+// OpenZeppelin Contracts (last updated v4.6.0) (token/ERC721/IERC721Receiver.sol)
+
+/**
+ * @title ERC721 token receiver interface
+ * @dev Interface for any contract that wants to support safeTransfers
+ * from ERC721 asset contracts.
+ */
+interface IERC721Receiver {
+    /**
+     * @dev Whenever an {IERC721} `tokenId` token is transferred to this contract via {IERC721-safeTransferFrom}
+     * by `operator` from `from`, this function is called.
+     *
+     * It must return its Solidity selector to confirm the token transfer.
+     * If any other value is returned or the interface is not implemented by the recipient, the transfer will be reverted.
+     *
+     * The selector can be obtained in Solidity with `IERC721Receiver.onERC721Received.selector`.
+     */
+    function onERC721Received(
+        address operator,
+        address from,
+        uint256 tokenId,
+        bytes calldata data
+    ) external returns (bytes4);
+}
+
+/**
+ * @dev Implementation of the {IERC721Receiver} interface.
+ *
+ * Accepts all token transfers.
+ * Make sure the contract is able to use its token with {IERC721-safeTransferFrom}, {IERC721-approve} or {IERC721-setApprovalForAll}.
+ */
+contract ERC721Holder is IERC721Receiver {
+    /**
+     * @dev See {IERC721Receiver-onERC721Received}.
+     *
+     * Always returns `IERC721Receiver.onERC721Received.selector`.
+     */
+    function onERC721Received(
+        address,
+        address,
+        uint256,
+        bytes memory
+    ) public virtual override returns (bytes4) {
+        return this.onERC721Received.selector;
+    }
+}
+
 interface LinkTokenInterface {
-    function allowance(address owner, address spender) external view returns (uint256 remaining);
+  function allowance(address owner, address spender) external view returns (uint256 remaining);
 
-    function approve(address spender, uint256 value) external returns (bool success);
+  function approve(address spender, uint256 value) external returns (bool success);
 
-    function balanceOf(address owner) external view returns (uint256 balance);
+  function balanceOf(address owner) external view returns (uint256 balance);
 
-    function decimals() external view returns (uint8 decimalPlaces);
+  function decimals() external view returns (uint8 decimalPlaces);
 
-    function decreaseApproval(address spender, uint256 addedValue) external returns (bool success);
+  function decreaseApproval(address spender, uint256 addedValue) external returns (bool success);
 
-    function increaseApproval(address spender, uint256 subtractedValue) external;
+  function increaseApproval(address spender, uint256 subtractedValue) external;
 
-    function name() external view returns (string memory tokenName);
+  function name() external view returns (string memory tokenName);
 
-    function symbol() external view returns (string memory tokenSymbol);
+  function symbol() external view returns (string memory tokenSymbol);
 
-    function totalSupply() external view returns (uint256 totalTokensIssued);
+  function totalSupply() external view returns (uint256 totalTokensIssued);
 
-    function transfer(address to, uint256 value) external returns (bool success);
+  function transfer(address to, uint256 value) external returns (bool success);
 
-    function transferAndCall(address to, uint256 value, bytes calldata data) external returns (bool success);
+  function transferAndCall(
+    address to,
+    uint256 value,
+    bytes calldata data
+  ) external returns (bool success);
 
-    function transferFrom(address from, address to, uint256 value) external returns (bool success);
+  function transferFrom(
+    address from,
+    address to,
+    uint256 value
+  ) external returns (bool success);
 }
 
 struct RegistrationParams {
@@ -1226,400 +808,6 @@ interface IKeeperRegistrar {
     function registerUpkeep(RegistrationParams calldata requestParams) external returns (uint256);
 }
 
-interface UniswapV3Pool {
-    event Burn(
-        address indexed owner,
-        int24 indexed tickLower,
-        int24 indexed tickUpper,
-        uint128 amount,
-        uint256 amount0,
-        uint256 amount1
-    );
-    event Collect(
-        address indexed owner,
-        address recipient,
-        int24 indexed tickLower,
-        int24 indexed tickUpper,
-        uint128 amount0,
-        uint128 amount1
-    );
-    event CollectProtocol(address indexed sender, address indexed recipient, uint128 amount0, uint128 amount1);
-    event Flash(
-        address indexed sender,
-        address indexed recipient,
-        uint256 amount0,
-        uint256 amount1,
-        uint256 paid0,
-        uint256 paid1
-    );
-    event IncreaseObservationCardinalityNext(
-        uint16 observationCardinalityNextOld,
-        uint16 observationCardinalityNextNew
-    );
-    event Initialize(uint160 sqrtPriceX96, int24 tick);
-    event Mint(
-        address sender,
-        address indexed owner,
-        int24 indexed tickLower,
-        int24 indexed tickUpper,
-        uint128 amount,
-        uint256 amount0,
-        uint256 amount1
-    );
-    event SetFeeProtocol(uint8 feeProtocol0Old, uint8 feeProtocol1Old, uint8 feeProtocol0New, uint8 feeProtocol1New);
-    event Swap(
-        address indexed sender,
-        address indexed recipient,
-        int256 amount0,
-        int256 amount1,
-        uint160 sqrtPriceX96,
-        uint128 liquidity,
-        int24 tick
-    );
-
-    function burn(int24 tickLower, int24 tickUpper, uint128 amount) external returns (uint256 amount0, uint256 amount1);
-
-    function collect(
-        address recipient,
-        int24 tickLower,
-        int24 tickUpper,
-        uint128 amount0Requested,
-        uint128 amount1Requested
-    ) external returns (uint128 amount0, uint128 amount1);
-
-    function collectProtocol(
-        address recipient,
-        uint128 amount0Requested,
-        uint128 amount1Requested
-    ) external returns (uint128 amount0, uint128 amount1);
-
-    function factory() external view returns (address);
-
-    function fee() external view returns (uint24);
-
-    function feeGrowthGlobal0X128() external view returns (uint256);
-
-    function feeGrowthGlobal1X128() external view returns (uint256);
-
-    function flash(address recipient, uint256 amount0, uint256 amount1, bytes memory data) external;
-
-    function increaseObservationCardinalityNext(uint16 observationCardinalityNext) external;
-
-    function initialize(uint160 sqrtPriceX96) external;
-
-    function liquidity() external view returns (uint128);
-
-    function maxLiquidityPerTick() external view returns (uint128);
-
-    function mint(
-        address recipient,
-        int24 tickLower,
-        int24 tickUpper,
-        uint128 amount,
-        bytes memory data
-    ) external returns (uint256 amount0, uint256 amount1);
-
-    function observations(
-        uint256
-    )
-        external
-        view
-        returns (
-            uint32 blockTimestamp,
-            int56 tickCumulative,
-            uint160 secondsPerLiquidityCumulativeX128,
-            bool initialized
-        );
-
-    function observe(
-        uint32[] memory secondsAgos
-    ) external view returns (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s);
-
-    function positions(
-        bytes32
-    )
-        external
-        view
-        returns (
-            uint128 liquidity,
-            uint256 feeGrowthInside0LastX128,
-            uint256 feeGrowthInside1LastX128,
-            uint128 tokensOwed0,
-            uint128 tokensOwed1
-        );
-
-    function protocolFees() external view returns (uint128 token0, uint128 token1);
-
-    function setFeeProtocol(uint8 feeProtocol0, uint8 feeProtocol1) external;
-
-    function slot0()
-        external
-        view
-        returns (
-            uint160 sqrtPriceX96,
-            int24 tick,
-            uint16 observationIndex,
-            uint16 observationCardinality,
-            uint16 observationCardinalityNext,
-            uint8 feeProtocol,
-            bool unlocked
-        );
-
-    function snapshotCumulativesInside(
-        int24 tickLower,
-        int24 tickUpper
-    ) external view returns (int56 tickCumulativeInside, uint160 secondsPerLiquidityInsideX128, uint32 secondsInside);
-
-    function swap(
-        address recipient,
-        bool zeroForOne,
-        int256 amountSpecified,
-        uint160 sqrtPriceLimitX96,
-        bytes memory data
-    ) external returns (int256 amount0, int256 amount1);
-
-    function tickBitmap(int16) external view returns (uint256);
-
-    function tickSpacing() external view returns (int24);
-
-    function ticks(
-        int24
-    )
-        external
-        view
-        returns (
-            uint128 liquidityGross,
-            int128 liquidityNet,
-            uint256 feeGrowthOutside0X128,
-            uint256 feeGrowthOutside1X128,
-            int56 tickCumulativeOutside,
-            uint160 secondsPerLiquidityOutsideX128,
-            uint32 secondsOutside,
-            bool initialized
-        );
-
-    function token0() external view returns (address);
-
-    function token1() external view returns (address);
-}
-
-interface NonfungiblePositionManager {
-    event Approval(address indexed owner, address indexed approved, uint256 indexed tokenId);
-    event ApprovalForAll(address indexed owner, address indexed operator, bool approved);
-    event Collect(uint256 indexed tokenId, address recipient, uint256 amount0, uint256 amount1);
-    event DecreaseLiquidity(uint256 indexed tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
-    event IncreaseLiquidity(uint256 indexed tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
-    event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
-
-    struct CollectParams {
-        uint256 tokenId;
-        address recipient;
-        uint128 amount0Max;
-        uint128 amount1Max;
-    }
-
-    struct DecreaseLiquidityParams {
-        uint256 tokenId;
-        uint128 liquidity;
-        uint256 amount0Min;
-        uint256 amount1Min;
-        uint256 deadline;
-    }
-
-    struct IncreaseLiquidityParams {
-        uint256 tokenId;
-        uint256 amount0Desired;
-        uint256 amount1Desired;
-        uint256 amount0Min;
-        uint256 amount1Min;
-        uint256 deadline;
-    }
-
-    struct MintParams {
-        address token0;
-        address token1;
-        uint24 fee;
-        int24 tickLower;
-        int24 tickUpper;
-        uint256 amount0Desired;
-        uint256 amount1Desired;
-        uint256 amount0Min;
-        uint256 amount1Min;
-        address recipient;
-        uint256 deadline;
-    }
-
-    function DOMAIN_SEPARATOR() external view returns (bytes32);
-
-    function PERMIT_TYPEHASH() external view returns (bytes32);
-
-    function WETH9() external view returns (address);
-
-    function approve(address to, uint256 tokenId) external;
-
-    function balanceOf(address owner) external view returns (uint256);
-
-    function baseURI() external pure returns (string memory);
-
-    function burn(uint256 tokenId) external payable;
-
-    function collect(CollectParams memory params) external payable returns (uint256 amount0, uint256 amount1);
-
-    function createAndInitializePoolIfNecessary(
-        address token0,
-        address token1,
-        uint24 fee,
-        uint160 sqrtPriceX96
-    ) external payable returns (address pool);
-
-    function decreaseLiquidity(
-        DecreaseLiquidityParams memory params
-    ) external payable returns (uint256 amount0, uint256 amount1);
-
-    function factory() external view returns (address);
-
-    function getApproved(uint256 tokenId) external view returns (address);
-
-    function increaseLiquidity(
-        IncreaseLiquidityParams memory params
-    ) external payable returns (uint128 liquidity, uint256 amount0, uint256 amount1);
-
-    function isApprovedForAll(address owner, address operator) external view returns (bool);
-
-    function mint(
-        MintParams memory params
-    ) external payable returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
-
-    function multicall(bytes[] memory data) external payable returns (bytes[] memory results);
-
-    function name() external view returns (string memory);
-
-    function ownerOf(uint256 tokenId) external view returns (address);
-
-    function permit(address spender, uint256 tokenId, uint256 deadline, uint8 v, bytes32 r, bytes32 s) external payable;
-
-    function positions(
-        uint256 tokenId
-    )
-        external
-        view
-        returns (
-            uint96 nonce,
-            address operator,
-            address token0,
-            address token1,
-            uint24 fee,
-            int24 tickLower,
-            int24 tickUpper,
-            uint128 liquidity,
-            uint256 feeGrowthInside0LastX128,
-            uint256 feeGrowthInside1LastX128,
-            uint128 tokensOwed0,
-            uint128 tokensOwed1
-        );
-
-    function refundETH() external payable;
-
-    function safeTransferFrom(address from, address to, uint256 tokenId) external;
-
-    function safeTransferFrom(address from, address to, uint256 tokenId, bytes memory _data) external;
-
-    function selfPermit(address token, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s) external payable;
-
-    function selfPermitAllowed(
-        address token,
-        uint256 nonce,
-        uint256 expiry,
-        uint8 v,
-        bytes32 r,
-        bytes32 s
-    ) external payable;
-
-    function selfPermitAllowedIfNecessary(
-        address token,
-        uint256 nonce,
-        uint256 expiry,
-        uint8 v,
-        bytes32 r,
-        bytes32 s
-    ) external payable;
-
-    function selfPermitIfNecessary(
-        address token,
-        uint256 value,
-        uint256 deadline,
-        uint8 v,
-        bytes32 r,
-        bytes32 s
-    ) external payable;
-
-    function setApprovalForAll(address operator, bool approved) external;
-
-    function supportsInterface(bytes4 interfaceId) external view returns (bool);
-
-    function sweepToken(address token, uint256 amountMinimum, address recipient) external payable;
-
-    function symbol() external view returns (string memory);
-
-    function tokenByIndex(uint256 index) external view returns (uint256);
-
-    function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (uint256);
-
-    function tokenURI(uint256 tokenId) external view returns (string memory);
-
-    function totalSupply() external view returns (uint256);
-
-    function transferFrom(address from, address to, uint256 tokenId) external;
-
-    function uniswapV3MintCallback(uint256 amount0Owed, uint256 amount1Owed, bytes memory data) external;
-
-    function unwrapWETH9(uint256 amountMinimum, address recipient) external payable;
-}
-
-// OpenZeppelin Contracts v4.4.1 (token/ERC721/utils/ERC721Holder.sol)
-
-// OpenZeppelin Contracts (last updated v4.6.0) (token/ERC721/IERC721Receiver.sol)
-
-/**
- * @title ERC721 token receiver interface
- * @dev Interface for any contract that wants to support safeTransfers
- * from ERC721 asset contracts.
- */
-interface IERC721Receiver {
-    /**
-     * @dev Whenever an {IERC721} `tokenId` token is transferred to this contract via {IERC721-safeTransferFrom}
-     * by `operator` from `from`, this function is called.
-     *
-     * It must return its Solidity selector to confirm the token transfer.
-     * If any other value is returned or the interface is not implemented by the recipient, the transfer will be reverted.
-     *
-     * The selector can be obtained in Solidity with `IERC721Receiver.onERC721Received.selector`.
-     */
-    function onERC721Received(
-        address operator,
-        address from,
-        uint256 tokenId,
-        bytes calldata data
-    ) external returns (bytes4);
-}
-
-/**
- * @dev Implementation of the {IERC721Receiver} interface.
- *
- * Accepts all token transfers.
- * Make sure the contract is able to use its token with {IERC721-safeTransferFrom}, {IERC721-approve} or {IERC721-setApprovalForAll}.
- */
-contract ERC721Holder is IERC721Receiver {
-    /**
-     * @dev See {IERC721Receiver-onERC721Received}.
-     *
-     * Always returns `IERC721Receiver.onERC721Received.selector`.
-     */
-    function onERC721Received(address, address, uint256, bytes memory) public virtual override returns (bytes4) {
-        return this.onERC721Received.selector;
-    }
-}
-
 // OpenZeppelin Contracts v4.4.1 (utils/Context.sol)
 
 /**
@@ -1642,9 +830,70 @@ abstract contract Context {
     }
 }
 
+interface AggregatorInterface {
+  function latestAnswer() external view returns (int256);
+
+  function latestTimestamp() external view returns (uint256);
+
+  function latestRound() external view returns (uint256);
+
+  function getAnswer(uint256 roundId) external view returns (int256);
+
+  function getTimestamp(uint256 roundId) external view returns (uint256);
+
+  event AnswerUpdated(int256 indexed current, uint256 indexed roundId, uint256 updatedAt);
+
+  event NewRound(uint256 indexed roundId, address indexed startedBy, uint256 startedAt);
+}
+
+interface AggregatorV3Interface {
+  function decimals() external view returns (uint8);
+
+  function description() external view returns (string memory);
+
+  function version() external view returns (uint256);
+
+  function getRoundData(uint80 _roundId)
+    external
+    view
+    returns (
+      uint80 roundId,
+      int256 answer,
+      uint256 startedAt,
+      uint256 updatedAt,
+      uint80 answeredInRound
+    );
+
+  function latestRoundData()
+    external
+    view
+    returns (
+      uint80 roundId,
+      int256 answer,
+      uint256 startedAt,
+      uint256 updatedAt,
+      uint80 answeredInRound
+    );
+}
+
+interface AggregatorV2V3Interface is AggregatorInterface, AggregatorV3Interface {}
+
+interface IChainlinkAggregator is AggregatorV2V3Interface {
+    function maxAnswer() external view returns (int192);
+
+    function minAnswer() external view returns (int192);
+
+    function aggregator() external view returns (address);
+}
+
 /**
  * @title Limit Order Registry
  * @notice Allows users to create decentralized limit orders.
+ * @dev DO NOT PLACE LIMIT ORDERS FOR STRONGLY CORRELATED ASSETS.
+ *      - If a stable coin pair were to temporarily depeg, and a user places a limit order
+ *        whose tick range encompasses the normal trading tick, there is NO way to cancel the order
+ *        because the order is mixed. The user would have to wait for another depeg event to happen
+ *        so that the order can be fulfilled, or the order can be cancelled.
  * @author crispymangoes
  */
 contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holder, Context {
@@ -1794,8 +1043,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
      */
     mapping(uint128 => mapping(address => uint128)) private batchIdToUserDepositAmount;
 
-    // Orders can be reused to save on NFT space
-    // PositionId to Order
     /**
      * @notice The `orderBook` maps Uniswap V3 token ids to BatchOrder information.
      * @dev Each BatchOrder contains a head and tail value which effectively,
@@ -1814,6 +1061,11 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     bool public isShutdown;
 
     /**
+     * @notice Chainlink Fast Gas Feed for ETH Mainnet.
+     */
+    address public fastGasFeed = 0x169E633A2D1E6c10dD91238Ba11c4A708dfEF37C;
+
+    /**
      * @notice The max possible gas the owner can set for the gas limit.
      */
     uint32 public constant MAX_GAS_LIMIT = 500_000;
@@ -1824,6 +1076,9 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
      */
     uint32 public constant MAX_GAS_PRICE = 1_000;
 
+    /**
+     * @notice The max number of orders that can be fulfilled in a single upkeep TX.
+     */
     uint16 public constant MAX_FILLS_PER_UPKEEP = 20;
 
     /*//////////////////////////////////////////////////////////////
@@ -1902,12 +1157,14 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         NonfungiblePositionManager _positionManager,
         ERC20 wrappedNative,
         LinkTokenInterface link,
-        IKeeperRegistrar _registrar
+        IKeeperRegistrar _registrar,
+        address _fastGasFeed
     ) Owned(_owner) {
         POSITION_MANAGER = _positionManager;
         WRAPPED_NATIVE = wrappedNative;
         LINK = link;
         registrar = _registrar;
+        fastGasFeed = _fastGasFeed;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -1993,6 +1250,13 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     function setUpkeepGasPrice(uint32 gasPrice) external onlyOwner {
         if (gasPrice > MAX_GAS_PRICE) revert LimitOrderRegistry__InvalidGasPrice();
         upkeepGasPrice = gasPrice;
+    }
+
+    /**
+     * @notice Allows owner to set the fast gas feed.
+     */
+    function setFastGasFeed(address feed) external onlyOwner {
+        fastGasFeed = feed;
     }
 
     /**
@@ -2182,7 +1446,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
      * @dev Caller must either approve this contract to spend their Wrapped Native token, and have at least `getFeePerUser` tokens in their wallet.
      *      Or caller must send `getFeePerUser` value with this call.
      */
-    function claimOrder(uint128 batchId, address user) external payable returns (uint256) {
+    function claimOrder(uint128 batchId, address user) external payable returns (ERC20, uint256) {
         Claim storage userClaim = claim[batchId];
         if (!userClaim.isReadyForClaim) revert LimitOrderRegistry__OrderNotReadyToClaim(batchId);
         uint256 depositAmount = batchIdToUserDepositAmount[batchId][user];
@@ -2218,9 +1482,11 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             if (refund > 0) payable(sender).transfer(refund);
         } else {
             WRAPPED_NATIVE.safeTransferFrom(sender, address(this), userClaim.feePerUser);
+            // If value is non zero send it back to caller.
+            if (msg.value > 0) payable(sender).transfer(msg.value);
         }
         emit ClaimOrder(user, batchId, owed);
-        return owed;
+        return (tokenOut, owed);
     }
 
     /**
@@ -2387,7 +1653,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         PoolData storage data = poolToData[pool];
 
         // Estimate gas cost.
-        uint256 estimatedFee = uint256(upkeepGasLimit * upkeepGasPrice) * 1e9; // Multiply by 1e9 to convert gas price to gwei
+        uint256 estimatedFee = uint256(upkeepGasLimit * getGasPrice());
 
         (, int24 currentTick, , , , , ) = pool.slot0();
         bool orderFilled;
@@ -2852,6 +2118,16 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         order.tail = 0;
     }
 
+    /**
+     * @notice Helper function to get the gas price used for fee calculation.
+     */
+    function getGasPrice() public view returns (uint256) {
+        // If gas feed is set use it.
+        if (fastGasFeed != address(0)) return uint256(IChainlinkAggregator(fastGasFeed).latestAnswer());
+        // Else use owner set value.
+        return uint256(upkeepGasPrice) * 1e9; // Multiply by 1e9 to convert gas price to gwei
+    }
+
     /*//////////////////////////////////////////////////////////////
                             VIEW LOGIC
     //////////////////////////////////////////////////////////////*/
@@ -2899,145 +2175,5 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
 
     function getClaim(uint128 batchId) external view returns (Claim memory) {
         return claim[batchId];
-    }
-}
-
-// TODO could add logic into the LOR that checks if the caller is a users TradeManager, and if so that allows the caller to create/edit orders on behalf of the user.
-// TODO add some bool that dictates where assets go, like on claim should assets be returned here, or to the owner
-// TODO Could allow users to funds their upkeep through this contract, which would interact with pegswap if needed.
-
-contract TradeManager is Initializable, AutomationCompatibleInterface, Owned {
-    using SafeTransferLib for ERC20;
-    using EnumerableSet for EnumerableSet.UintSet;
-
-    EnumerableSet.UintSet private ownerOrders; // Set containing all pending orders owner has
-
-    uint32 public constant UPKEEP_GAS_LIMIT = 500_000;
-
-    LimitOrderRegistry public limitOrderRegistry;
-
-    constructor() Owned(address(0)) {}
-
-    function initialize(
-        address user,
-        LimitOrderRegistry _limitOrderRegistry,
-        LinkTokenInterface LINK,
-        IKeeperRegistrar registrar,
-        uint256 initialUpkeepFunds
-    ) external initializer {
-        owner = user;
-        limitOrderRegistry = _limitOrderRegistry;
-
-        // Create new upkeep
-        if (initialUpkeepFunds > 0) {
-            ERC20(address(LINK)).safeTransferFrom(msg.sender, address(this), initialUpkeepFunds);
-            ERC20(address(LINK)).safeApprove(address(registrar), initialUpkeepFunds);
-            RegistrationParams memory params = RegistrationParams({
-                name: "Trade Manager",
-                encryptedEmail: abi.encode(0),
-                upkeepContract: address(this),
-                gasLimit: UPKEEP_GAS_LIMIT,
-                adminAddress: user,
-                checkData: abi.encode(0),
-                offchainConfig: abi.encode(0),
-                amount: uint96(initialUpkeepFunds)
-            });
-            registrar.registerUpkeep(params);
-        }
-    }
-
-    function newOrder(
-        UniswapV3Pool pool,
-        ERC20 assetIn,
-        int24 targetTick,
-        uint128 amount,
-        bool direction,
-        uint256 startingNode
-    ) external onlyOwner {
-        uint256 managerBalance = assetIn.balanceOf(address(this));
-        // If manager lacks funds, transfer delta into manager.
-        if (managerBalance < amount) assetIn.safeTransferFrom(msg.sender, address(this), amount - managerBalance);
-
-        assetIn.safeApprove(address(limitOrderRegistry), amount);
-        uint128 batchId = limitOrderRegistry.newOrder(pool, targetTick, amount, direction, startingNode);
-        ownerOrders.add(batchId);
-    }
-
-    function cancelOrder(UniswapV3Pool pool, int24 targetTick, bool direction) external onlyOwner {
-        (uint128 amount0, uint128 amount1, uint128 batchId) = limitOrderRegistry.cancelOrder(
-            pool,
-            targetTick,
-            direction
-        );
-        if (amount0 > 0) ERC20(pool.token0()).safeTransfer(owner, amount0);
-        if (amount1 > 0) ERC20(pool.token1()).safeTransfer(owner, amount1);
-
-        ownerOrders.remove(batchId);
-    }
-
-    function claimOrder(uint128 batchId) external onlyOwner {
-        uint256 value = limitOrderRegistry.getFeePerUser(batchId);
-        limitOrderRegistry.claimOrder{ value: value }(batchId, address(this));
-
-        ownerOrders.remove(batchId);
-    }
-
-    function withdrawNative(uint256 amount) external onlyOwner {
-        payable(owner).transfer(amount);
-    }
-
-    function withdrawERC20(ERC20 token, uint256 amount) external onlyOwner {
-        token.safeTransfer(owner, amount);
-    }
-
-    receive() external payable {}
-
-    uint256 public constant MAX_CLAIMS = 10;
-
-    struct ClaimInfo {
-        uint128 batchId;
-        uint128 fee;
-    }
-
-    function checkUpkeep(bytes calldata) external view returns (bool upkeepNeeded, bytes memory performData) {
-        uint256 nativeBalance = address(this).balance;
-        // Iterate through owner orders, and build a claim array
-        uint256 count = ownerOrders.length();
-        ClaimInfo[MAX_CLAIMS] memory claimInfo;
-        uint256 claimCount;
-        for (uint256 i; i < count; ++i) {
-            uint128 batchId = uint128(ownerOrders.at(i));
-            // Current order is not fulfilled.
-            if (!limitOrderRegistry.isOrderReadyForClaim(batchId)) continue;
-            uint128 fee = limitOrderRegistry.getFeePerUser(batchId);
-            if (fee > nativeBalance) break;
-            // Subtract fee from balance.
-            nativeBalance -= fee;
-            claimInfo[claimCount].batchId = batchId;
-            claimInfo[claimCount].fee = fee;
-            claimCount++;
-        }
-
-        if (claimCount > 0) {
-            upkeepNeeded = true;
-            performData = abi.encode(claimInfo);
-        }
-        // else nothing to do.
-    }
-
-    // Currently this is claiming as if this contract is the user, which is the intended goal to have an OCO order...
-    // But initially just for auto claiming users orders, but maybe the owner should be able to toggle this?
-
-    // I guess the owner could always be the user if the limit order registry was setup to supoprt the trade manager.
-    // But if we want the two things to be stand alone, then the use of the LOR should be this contract...
-    function performUpkeep(bytes calldata performData) external {
-        // Accept claim array and claim all orders
-        ClaimInfo[MAX_CLAIMS] memory claimInfo = abi.decode(performData, (ClaimInfo[10]));
-        for (uint256 i; i < 10; ++i) {
-            if (limitOrderRegistry.isOrderReadyForClaim(claimInfo[i].batchId)) {
-                limitOrderRegistry.claimOrder{ value: claimInfo[i].fee }(claimInfo[i].batchId, address(this));
-                ownerOrders.remove(claimInfo[i].batchId);
-            }
-        }
     }
 }

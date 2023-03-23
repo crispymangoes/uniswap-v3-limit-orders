@@ -6,7 +6,7 @@ import { LimitOrderRegistry } from "src/LimitOrderRegistry.sol";
 import { LimitOrderRegistryLens } from "src/LimitOrderRegistryLens.sol";
 import { TradeManagerFactory } from "src/TradeManagerFactory.sol";
 import { TradeManager } from "src/TradeManager.sol";
-import { NonfungiblePositionManager as INonfungiblePositionManager } from "src/interfaces/uniswapV3/NonfungiblePositionManager.sol";
+import { NonFungiblePositionManager as INonFungiblePositionManager } from "src/interfaces/uniswapV3/NonFungiblePositionManager.sol";
 import { LinkTokenInterface } from "@chainlink/contracts/src/v0.8/interfaces/LinkTokenInterface.sol";
 import { IKeeperRegistrar as KeeperRegistrar } from "src/interfaces/chainlink/IKeeperRegistrar.sol";
 import { UniswapV3Pool as IUniswapV3Pool } from "src/interfaces/uniswapV3/UniswapV3Pool.sol";
@@ -29,8 +29,8 @@ contract CreateOrdersScript is Script {
     ERC20 private WETH = ERC20(0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619);
 
     address private owner = 0xf416e1FE92527c56Db9DC8Eaff7630F6e5a2E2eD;
-    INonfungiblePositionManager private positionManger =
-        INonfungiblePositionManager(0xC36442b4a4522E871399CD717aBDD847Ab11FE88);
+    INonFungiblePositionManager private positionManger =
+        INonFungiblePositionManager(0xC36442b4a4522E871399CD717aBDD847Ab11FE88);
 
     ERC20 private WrappedNative = ERC20(0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270);
     LinkTokenInterface private LINK = LinkTokenInterface(0xb0897686c545045aFc77CF20eC7A532E3120E0F1);

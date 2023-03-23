@@ -6,7 +6,7 @@ import { SafeTransferLib } from "@solmate/utils/SafeTransferLib.sol";
 import { AutomationCompatibleInterface } from "@chainlink/contracts/src/v0.8/interfaces/AutomationCompatibleInterface.sol";
 import { Owned } from "@solmate/auth/Owned.sol";
 import { UniswapV3Pool } from "src/interfaces/uniswapV3/UniswapV3Pool.sol";
-import { NonfungiblePositionManager } from "src/interfaces/uniswapV3/NonfungiblePositionManager.sol";
+import { NonFungiblePositionManager } from "src/interfaces/uniswapV3/NonFungiblePositionManager.sol";
 import { ERC721Holder } from "@openzeppelin/contracts/token/ERC721/utils/ERC721Holder.sol";
 import { LinkTokenInterface } from "@chainlink/contracts/src/v0.8/interfaces/LinkTokenInterface.sol";
 import { IKeeperRegistrar, RegistrationParams } from "src/interfaces/chainlink/IKeeperRegistrar.sol";
@@ -275,13 +275,13 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
 
     ERC20 public immutable WRAPPED_NATIVE; // Mainnet 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2
 
-    NonfungiblePositionManager public immutable POSITION_MANAGER; // Mainnet 0xC36442b4a4522E871399CD717aBDD847Ab11FE88
+    NonFungiblePositionManager public immutable POSITION_MANAGER; // Mainnet 0xC36442b4a4522E871399CD717aBDD847Ab11FE88
 
     LinkTokenInterface public immutable LINK; // Mainnet 0x514910771AF9Ca656af840dff83E8264EcF986CA
 
     constructor(
         address _owner,
-        NonfungiblePositionManager _positionManager,
+        NonFungiblePositionManager _positionManager,
         ERC20 wrappedNative,
         LinkTokenInterface link,
         IKeeperRegistrar _registrar,
@@ -1011,7 +1011,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         uint128 amount1Min = amount1 == 0 ? 0 : (amount1 * 0.9999e18) / 1e18;
 
         // Create mint params.
-        NonfungiblePositionManager.MintParams memory params = NonfungiblePositionManager.MintParams({
+        NonFungiblePositionManager.MintParams memory params = NonFungiblePositionManager.MintParams({
             token0: address(data.token0),
             token1: address(data.token1),
             fee: data.fee,
@@ -1058,7 +1058,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         uint128 amount1Min = amount1 == 0 ? 0 : (amount1 * 0.9999e18) / 1e18;
 
         // Create increase liquidity params.
-        NonfungiblePositionManager.IncreaseLiquidityParams memory params = NonfungiblePositionManager
+        NonFungiblePositionManager.IncreaseLiquidityParams memory params = NonFungiblePositionManager
             .IncreaseLiquidityParams({
                 tokenId: positionId,
                 amount0Desired: amount0,
@@ -1169,7 +1169,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         liquidity = uint128(uint256(liquidity * liquidityPercent) / 1e18);
 
         // Create decrease liquidity params.
-        NonfungiblePositionManager.DecreaseLiquidityParams memory params = NonfungiblePositionManager
+        NonFungiblePositionManager.DecreaseLiquidityParams memory params = NonFungiblePositionManager
             .DecreaseLiquidityParams({
                 tokenId: target,
                 liquidity: liquidity,
@@ -1199,7 +1199,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             amount1Max = amount1;
         }
         // Create fee collection params.
-        NonfungiblePositionManager.CollectParams memory collectParams = NonfungiblePositionManager.CollectParams({
+        NonFungiblePositionManager.CollectParams memory collectParams = NonFungiblePositionManager.CollectParams({
             tokenId: target,
             recipient: address(this),
             amount0Max: amount0Max,

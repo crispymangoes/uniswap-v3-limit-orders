@@ -1,6 +1,7 @@
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.10;
 
-interface NonfungiblePositionManager {
+interface NonFungiblePositionManager {
     event Approval(address indexed owner, address indexed approved, uint256 indexed tokenId);
     event ApprovalForAll(address indexed owner, address indexed operator, bool approved);
     event Collect(uint256 indexed tokenId, address recipient, uint256 amount0, uint256 amount1);
@@ -47,39 +48,57 @@ interface NonfungiblePositionManager {
     }
 
     function DOMAIN_SEPARATOR() external view returns (bytes32);
+
     function PERMIT_TYPEHASH() external view returns (bytes32);
+
     function WETH9() external view returns (address);
+
     function approve(address to, uint256 tokenId) external;
+
     function balanceOf(address owner) external view returns (uint256);
+
     function baseURI() external pure returns (string memory);
+
     function burn(uint256 tokenId) external payable;
+
     function collect(CollectParams memory params) external payable returns (uint256 amount0, uint256 amount1);
-    function createAndInitializePoolIfNecessary(address token0, address token1, uint24 fee, uint160 sqrtPriceX96)
-        external
-        payable
-        returns (address pool);
-    function decreaseLiquidity(DecreaseLiquidityParams memory params)
-        external
-        payable
-        returns (uint256 amount0, uint256 amount1);
+
+    function createAndInitializePoolIfNecessary(
+        address token0,
+        address token1,
+        uint24 fee,
+        uint160 sqrtPriceX96
+    ) external payable returns (address pool);
+
+    function decreaseLiquidity(
+        DecreaseLiquidityParams memory params
+    ) external payable returns (uint256 amount0, uint256 amount1);
+
     function factory() external view returns (address);
+
     function getApproved(uint256 tokenId) external view returns (address);
-    function increaseLiquidity(IncreaseLiquidityParams memory params)
-        external
-        payable
-        returns (uint128 liquidity, uint256 amount0, uint256 amount1);
+
+    function increaseLiquidity(
+        IncreaseLiquidityParams memory params
+    ) external payable returns (uint128 liquidity, uint256 amount0, uint256 amount1);
+
     function isApprovedForAll(address owner, address operator) external view returns (bool);
-    function mint(MintParams memory params)
-        external
-        payable
-        returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
+
+    function mint(
+        MintParams memory params
+    ) external payable returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
+
     function multicall(bytes[] memory data) external payable returns (bytes[] memory results);
+
     function name() external view returns (string memory);
+
     function ownerOf(uint256 tokenId) external view returns (address);
-    function permit(address spender, uint256 tokenId, uint256 deadline, uint8 v, bytes32 r, bytes32 s)
-        external
-        payable;
-    function positions(uint256 tokenId)
+
+    function permit(address spender, uint256 tokenId, uint256 deadline, uint8 v, bytes32 r, bytes32 s) external payable;
+
+    function positions(
+        uint256 tokenId
+    )
         external
         view
         returns (
@@ -96,30 +115,61 @@ interface NonfungiblePositionManager {
             uint128 tokensOwed0,
             uint128 tokensOwed1
         );
+
     function refundETH() external payable;
+
     function safeTransferFrom(address from, address to, uint256 tokenId) external;
+
     function safeTransferFrom(address from, address to, uint256 tokenId, bytes memory _data) external;
-    function selfPermit(address token, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s)
-        external
-        payable;
-    function selfPermitAllowed(address token, uint256 nonce, uint256 expiry, uint8 v, bytes32 r, bytes32 s)
-        external
-        payable;
-    function selfPermitAllowedIfNecessary(address token, uint256 nonce, uint256 expiry, uint8 v, bytes32 r, bytes32 s)
-        external
-        payable;
-    function selfPermitIfNecessary(address token, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s)
-        external
-        payable;
+
+    function selfPermit(address token, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s) external payable;
+
+    function selfPermitAllowed(
+        address token,
+        uint256 nonce,
+        uint256 expiry,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external payable;
+
+    function selfPermitAllowedIfNecessary(
+        address token,
+        uint256 nonce,
+        uint256 expiry,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external payable;
+
+    function selfPermitIfNecessary(
+        address token,
+        uint256 value,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external payable;
+
     function setApprovalForAll(address operator, bool approved) external;
+
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
+
     function sweepToken(address token, uint256 amountMinimum, address recipient) external payable;
+
     function symbol() external view returns (string memory);
+
     function tokenByIndex(uint256 index) external view returns (uint256);
+
     function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (uint256);
+
     function tokenURI(uint256 tokenId) external view returns (string memory);
+
     function totalSupply() external view returns (uint256);
+
     function transferFrom(address from, address to, uint256 tokenId) external;
+
     function uniswapV3MintCallback(uint256 amount0Owed, uint256 amount1Owed, bytes memory data) external;
+
     function unwrapWETH9(uint256 amountMinimum, address recipient) external payable;
 }

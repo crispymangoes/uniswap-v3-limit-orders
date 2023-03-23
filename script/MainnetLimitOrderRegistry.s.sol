@@ -6,7 +6,7 @@ import { LimitOrderRegistry } from "src/LimitOrderRegistry.sol";
 import { LimitOrderRegistryLens } from "src/LimitOrderRegistryLens.sol";
 import { TradeManagerFactory } from "src/TradeManagerFactory.sol";
 import { TradeManager } from "src/TradeManager.sol";
-import { NonfungiblePositionManager as INonfungiblePositionManager } from "src/interfaces/uniswapV3/NonfungiblePositionManager.sol";
+import { NonFungiblePositionManager as INonFungiblePositionManager } from "src/interfaces/uniswapV3/NonFungiblePositionManager.sol";
 import { LinkTokenInterface } from "@chainlink/contracts/src/v0.8/interfaces/LinkTokenInterface.sol";
 import { IKeeperRegistrar as KeeperRegistrar } from "src/interfaces/chainlink/IKeeperRegistrar.sol";
 import { UniswapV3Pool as IUniswapV3Pool } from "src/interfaces/uniswapV3/UniswapV3Pool.sol";
@@ -15,7 +15,7 @@ import "forge-std/Script.sol";
 
 /**
  * @dev Run
- *      `source .env && forge script script/MainnetLimitOrderRegistry.s.sol:MainnetLimitOrderRegistryScript --rpc-url $MAINNET_RPC_URL  --private-key $PRIVATE_KEY —optimize —optimizer-runs 200 --with-gas-price 30000000000 --verify --etherscan-api-key $ETHERSCAN_KEY --broadcast --slow`
+ *      `source .env && forge script script/MainnetLimitOrderRegistry.s.sol:MainnetLimitOrderRegistryScript --rpc-url $MAINNET_RPC_URL  --private-key $PRIVATE_KEY —optimize —optimizer-runs 200 --with-gas-price 15000000000 --verify --etherscan-api-key $ETHERSCAN_KEY --broadcast --slow`
  * @dev Optionally can change `--with-gas-price` to something more reasonable
  */
 contract MainnetLimitOrderRegistryScript is Script {
@@ -28,8 +28,8 @@ contract MainnetLimitOrderRegistryScript is Script {
     ERC20 private WETH = ERC20(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
 
     address private owner = 0xf416e1FE92527c56Db9DC8Eaff7630F6e5a2E2eD;
-    INonfungiblePositionManager private positionManger =
-        INonfungiblePositionManager(0xC36442b4a4522E871399CD717aBDD847Ab11FE88);
+    INonFungiblePositionManager private positionManger =
+        INonFungiblePositionManager(0xC36442b4a4522E871399CD717aBDD847Ab11FE88);
 
     ERC20 private WrappedNative = ERC20(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
     LinkTokenInterface private LINK = LinkTokenInterface(0x514910771AF9Ca656af840dff83E8264EcF986CA);
@@ -43,7 +43,7 @@ contract MainnetLimitOrderRegistryScript is Script {
         vm.startBroadcast();
 
         // Deploy limit order registry.
-        registry = new LimitOrderRegistry(msg.sender, positionManger, WrappedNative, LINK, REGISTRAR, fastGasFeed);
+        registry = new LimitOrderRegistry(owner, positionManger, WrappedNative, LINK, REGISTRAR, fastGasFeed);
         lens = new LimitOrderRegistryLens(registry);
         TradeManager implementation = new TradeManager();
         // Initialize implementation.

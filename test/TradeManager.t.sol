@@ -6,7 +6,7 @@ import { TradeManagerFactory } from "src/TradeManagerFactory.sol";
 import { TradeManager } from "src/TradeManager.sol";
 
 import { ERC20 } from "@solmate/tokens/ERC20.sol";
-import { NonfungiblePositionManager as INonfungiblePositionManager } from "src/interfaces/uniswapV3/NonfungiblePositionManager.sol";
+import { NonFungiblePositionManager as INonFungiblePositionManager } from "src/interfaces/uniswapV3/NonFungiblePositionManager.sol";
 import { UniswapV3Pool as IUniswapV3Pool } from "src/interfaces/uniswapV3/UniswapV3Pool.sol";
 import { IUniswapV3Router } from "src/interfaces/uniswapV3/IUniswapV3Router.sol";
 import { LinkTokenInterface } from "@chainlink/contracts/src/v0.8/interfaces/LinkTokenInterface.sol";
@@ -17,8 +17,8 @@ import { Test, console } from "@forge-std/Test.sol";
 contract TradeManagerTest is Test {
     LimitOrderRegistry public registry;
 
-    INonfungiblePositionManager private positionManger =
-        INonfungiblePositionManager(0xC36442b4a4522E871399CD717aBDD847Ab11FE88);
+    INonFungiblePositionManager private positionManger =
+        INonFungiblePositionManager(0xC36442b4a4522E871399CD717aBDD847Ab11FE88);
 
     IUniswapV3Router private router = IUniswapV3Router(0xE592427A0AEce92De3Edee1F18E0157C05861564);
 
