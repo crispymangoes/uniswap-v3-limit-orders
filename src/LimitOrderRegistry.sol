@@ -168,7 +168,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     /**
      * @notice Mapping is used to store user deposit amounts in each BatchOrder.
      */
-    mapping(uint128 => mapping(address => uint128)) private batchIdToUserDepositAmount;
+    mapping(uint128 => mapping(address => uint128)) public batchIdToUserDepositAmount;
 
     /**
      * @notice The `orderBook` maps Uniswap V3 token ids to BatchOrder information.
