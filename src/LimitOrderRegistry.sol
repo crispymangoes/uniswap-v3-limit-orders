@@ -168,7 +168,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     /**
      * @notice Mapping is used to store user deposit amounts in each BatchOrder.
      */
-    mapping(uint128 => mapping(address => uint128)) private batchIdToUserDepositAmount;
+    mapping(uint128 => mapping(address => uint128)) public batchIdToUserDepositAmount;
 
     /**
      * @notice The `orderBook` maps Uniswap V3 token ids to BatchOrder information.
@@ -1146,7 +1146,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
 
     /**
      * @notice Removes liquidity from `target` Uniswap V3 LP position.
-     * @dev Collects fees from `target` position.
+     * @dev Collects fees from `target` position, and saves them in `tokenToSwapFees`.
      */
     function _takeFromPosition(
         uint256 target,
@@ -1212,10 +1212,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         // Save any swap fees.
         if (token0Fees > 0) tokenToSwapFees[address(token0)] += token0Fees;
         if (token1Fees > 0) tokenToSwapFees[address(token1)] += token1Fees;
-
-        // TODO remove below
-        // amount0 = uint128(token0.balanceOf(address(this)) - token0Balance);
-        // amount1 = uint128(token1.balanceOf(address(this)) - token1Balance);
 
         return (amount0, amount1);
     }
