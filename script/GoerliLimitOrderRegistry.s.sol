@@ -36,6 +36,7 @@ contract GoerliLimitOrderRegistryScript is Script {
     KeeperRegistrar private REGISTRAR = KeeperRegistrar(0x57A4a13b35d25EE78e084168aBaC5ad360252467);
 
     IUniswapV3Pool private USDC_WETH_05_POOL = IUniswapV3Pool(0xD11ee14805642dCb5BF840845836AFe3cfc16383);
+    IUniswapV3Pool private NEW_POOL = IUniswapV3Pool(0x7F5EEDeCE2c8a494CE98EfEF69751Fd6A3fBC42c);
 
     address private fastGasFeed = address(0);
 
@@ -43,30 +44,33 @@ contract GoerliLimitOrderRegistryScript is Script {
         vm.startBroadcast();
 
         // Deploy limit order registry.
-        registry = new LimitOrderRegistry(owner, positionManger, WrappedNative, LINK, REGISTRAR, fastGasFeed);
-        lens = new LimitOrderRegistryLens(registry);
-        TradeManager implementation = new TradeManager();
+        // registry = new LimitOrderRegistry(owner, positionManger, WrappedNative, LINK, REGISTRAR, fastGasFeed);
+        registry = LimitOrderRegistry(0xe9aa337139f4E8aBB9A5cF0Ef1f70D5F8187aa8d);
+        // lens = new LimitOrderRegistryLens(registry);
+        // TradeManager implementation = new TradeManager();
         // Initialize implementation.
-        implementation.initialize(
-            address(0),
-            LimitOrderRegistry(address(0)),
-            LinkTokenInterface(address(0)),
-            KeeperRegistrar(address(0)),
-            0
-        );
-        factory = new TradeManagerFactory(address(implementation));
+        // implementation.initialize(
+        //     address(0),
+        //     LimitOrderRegistry(address(0)),
+        //     LinkTokenInterface(address(0)),
+        //     KeeperRegistrar(address(0)),
+        //     0
+        // );
+        // factory = new TradeManagerFactory(address(implementation));
 
-        registry.setMinimumAssets(1, USDC);
-        registry.setMinimumAssets(1, WETH);
+        // registry.setMinimumAssets(1, USDC);
+        // registry.setMinimumAssets(1, WETH);
 
         // Setup pool.
         uint256 upkeepFunds = 5e18;
         LINK.approve(address(registry), upkeepFunds);
-        registry.setupLimitOrder(USDC_WETH_05_POOL, upkeepFunds);
+        registry.setupLimitOrder(NEW_POOL, upkeepFunds);
+
+        registry.transferOwnership(0x958892b4a0512b28AaAC890FC938868BBD42f064);
 
         // Create Trade Manager.
-        LINK.approve(address(factory), upkeepFunds);
-        manager = factory.createTradeManager(registry, LINK, REGISTRAR, upkeepFunds);
+        // LINK.approve(address(factory), upkeepFunds);
+        // manager = factory.createTradeManager(registry, LINK, REGISTRAR, upkeepFunds);
 
         vm.stopBroadcast();
     }

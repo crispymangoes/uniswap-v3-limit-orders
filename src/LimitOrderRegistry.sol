@@ -133,7 +133,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     /**
      * @notice Maps tick ranges to LP positions owned by this contract.
      */
-    mapping(int24 => mapping(int24 => uint256)) public getPositionFromTicks; // maps lower -> upper -> positionId
+    mapping(UniswapV3Pool => mapping(int24 => mapping(int24 => uint256))) public getPositionFromTicks; // maps pool -> lower -> upper -> positionId
 
     /**
      * @notice The minimum amount of assets required to create a `newOrder`.
@@ -258,6 +258,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     error LimitOrderRegistry__InvalidGasLimit();
     error LimitOrderRegistry__InvalidGasPrice();
     error LimitOrderRegistry__InvalidFillsPerUpkeep();
+    error LimitOrderRegistry__AmountShouldBeZero();
 
     /*//////////////////////////////////////////////////////////////
                                  ENUMS
@@ -497,7 +498,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         }
 
         // Get the position id.
-        details.positionId = getPositionFromTicks[details.lower][details.upper];
+        details.positionId = getPositionFromTicks[pool][details.lower][details.upper];
 
         if (direction) details.amount0 = amount;
         else details.amount1 = amount;
@@ -530,7 +531,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             _updateCenter(pool, details.positionId, details.tick, details.upper, details.lower);
 
             // Update getPositionFromTicks since we have a new LP position.
-            getPositionFromTicks[details.lower][details.upper] = details.positionId;
+            getPositionFromTicks[pool][details.lower][details.upper] = details.positionId;
         } else {
             // Check if the position id is already being used in List.
             BatchOrder memory order = orderBook[details.positionId];
@@ -649,14 +650,14 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                     lower = targetTick;
                 }
             }
-            // Validate lower, upper,and direction.
+            // Validate lower, upper,and direction. Make sure order is not ITM or MIXED
             {
                 OrderStatus status = _getOrderStatus(tick, lower, upper, direction);
                 if (status != OrderStatus.OTM) revert LimitOrderRegistry__OrderITM(tick, targetTick, direction);
             }
 
             // Get the position id.
-            positionId = getPositionFromTicks[lower][upper];
+            positionId = getPositionFromTicks[pool][lower][upper];
 
             if (positionId == 0) revert LimitOrderRegistry__InvalidPositionId();
         }
@@ -715,14 +716,13 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         if (order.direction) {
             if (amount0 > 0) poolToData[pool].token0.safeTransfer(sender, amount0);
             else revert LimitOrderRegistry__NoLiquidityInOrder();
-            // Save any swap fees.
-            if (amount1 > 0) tokenToSwapFees[address(poolToData[pool].token1)] += amount1;
+            if (amount1 > 0) revert LimitOrderRegistry__AmountShouldBeZero();
         } else {
             if (amount1 > 0) poolToData[pool].token1.safeTransfer(sender, amount1);
             else revert LimitOrderRegistry__NoLiquidityInOrder();
-            // Save any swap fees.
-            if (amount0 > 0) tokenToSwapFees[address(poolToData[pool].token0)] += amount0;
+            if (amount0 > 0) revert LimitOrderRegistry__AmountShouldBeZero();
         }
+
         emit CancelOrder(sender, amount0, amount1, order);
     }
 
@@ -784,8 +784,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
 
         (, int24 currentTick, , , , , ) = pool.slot0();
         bool orderFilled;
-        uint128 totalToken0Fees;
-        uint128 totalToken1Fees;
 
         // Fulfill orders.
         uint256 target = walkDirection ? data.centerHead : data.centerTail;
@@ -794,9 +792,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             BatchOrder storage order = orderBook[target];
             OrderStatus status = _getOrderStatus(currentTick, order.tickLower, order.tickUpper, order.direction);
             if (status == OrderStatus.ITM) {
-                (uint128 token0Fees, uint128 token1Fees) = _fulfillOrder(target, pool, order, estimatedFee);
-                totalToken0Fees += token0Fees;
-                totalToken1Fees += token1Fees;
+                _fulfillOrder(target, pool, order, estimatedFee);
                 target = walkDirection ? order.head : order.tail;
                 // Zero out orders head and tail values removing order from the list.
                 order.head = 0;
@@ -813,10 +809,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         }
 
         if (!orderFilled) revert LimitOrderRegistry__NoOrdersToFulfill();
-
-        // Save fees.
-        if (totalToken0Fees > 0) tokenToSwapFees[address(poolToData[pool].token0)] += totalToken0Fees;
-        if (totalToken1Fees > 0) tokenToSwapFees[address(poolToData[pool].token1)] += totalToken1Fees;
 
         // Update center.
         if (walkDirection) {
@@ -1123,7 +1115,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         UniswapV3Pool pool,
         BatchOrder storage order,
         uint256 estimatedFee
-    ) internal returns (uint128 token0Fees, uint128 token1Fees) {
+    ) internal {
         // Save fee per user in Claim Struct.
         uint256 totalUsers = order.userCount;
         Claim storage newClaim = claim[order.batchId];
@@ -1131,23 +1123,19 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         newClaim.pool = pool;
 
         // Take all liquidity from the order.
-        (uint128 amount0, uint128 amount1) = _takeFromPosition(target, pool, 1e18);
+        uint128 amount0;
+        uint128 amount1;
+        (amount0, amount1) = _takeFromPosition(target, pool, 1e18);
         if (order.direction) {
             // Copy the tokenIn amount from the order, this is the total user deposit.
             newClaim.token0Amount = order.token0Amount;
-            // Total amount received is the difference in balance.
+            // Total token out is amount1.
             newClaim.token1Amount = amount1;
-
-            // Record any extra swap fees pool earned.
-            token0Fees = amount0;
         } else {
             // Copy the tokenIn amount from the order, this is the total user deposit.
             newClaim.token1Amount = order.token1Amount;
-            // Total amount received is the difference in balance.
+            // Total token out is amount0.
             newClaim.token0Amount = amount0;
-
-            // Record any extra swap fees pool earned.
-            token1Fees = amount1;
         }
         newClaim.direction = order.direction;
 
@@ -1188,23 +1176,26 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         }
 
         // If completely closing position, then collect fees as well.
-        uint128 amount0Max;
-        uint128 amount1Max;
-        if (liquidityPercent == 1e18) {
-            amount0Max = type(uint128).max;
-            amount1Max = type(uint128).max;
-        } else {
-            // Otherwise only collect principal.
-            amount0Max = amount0;
-            amount1Max = amount1;
+        NonFungiblePositionManager.CollectParams memory collectParams;
+        {
+            uint128 amount0Max;
+            uint128 amount1Max;
+            if (liquidityPercent == 1e18) {
+                amount0Max = type(uint128).max;
+                amount1Max = type(uint128).max;
+            } else {
+                // Otherwise only collect principal.
+                amount0Max = amount0;
+                amount1Max = amount1;
+            }
+            // Create fee collection params.
+            collectParams = NonFungiblePositionManager.CollectParams({
+                tokenId: target,
+                recipient: address(this),
+                amount0Max: amount0Max,
+                amount1Max: amount1Max
+            });
         }
-        // Create fee collection params.
-        NonFungiblePositionManager.CollectParams memory collectParams = NonFungiblePositionManager.CollectParams({
-            tokenId: target,
-            recipient: address(this),
-            amount0Max: amount0Max,
-            amount1Max: amount1Max
-        });
 
         // Save token balances.
         ERC20 token0 = poolToData[pool].token0;
@@ -1215,8 +1206,16 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         // Collect fees.
         POSITION_MANAGER.collect(collectParams);
 
-        amount0 = uint128(token0.balanceOf(address(this)) - token0Balance);
-        amount1 = uint128(token1.balanceOf(address(this)) - token1Balance);
+        // Save fees earned, take the total token amount out - the amount removed from liquidity to get the fees earned.
+        uint128 token0Fees = uint128(token0.balanceOf(address(this)) - token0Balance) - amount0;
+        uint128 token1Fees = uint128(token1.balanceOf(address(this)) - token1Balance) - amount1;
+        // Save any swap fees.
+        if (token0Fees > 0) tokenToSwapFees[address(token0)] += token0Fees;
+        if (token1Fees > 0) tokenToSwapFees[address(token1)] += token1Fees;
+
+        // TODO remove below
+        // amount0 = uint128(token0.balanceOf(address(this)) - token0Balance);
+        // amount1 = uint128(token1.balanceOf(address(this)) - token1Balance);
 
         return (amount0, amount1);
     }

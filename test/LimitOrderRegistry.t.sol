@@ -1192,7 +1192,7 @@ contract LimitOrderRegistryTest is Test {
         uint256 feeOwed = registry.getFeePerUser(1);
         uint256 totalFeeOwed = uint256(registry.upkeepGasLimit() * registry.upkeepGasPrice()) * 1e9;
         // Expected WETH balance.
-        uint256 expectedBalance = 791132260405118457;
+        uint256 expectedBalance = 790736694274915898;
         assertEq(feeOwed, totalFeeOwed / 2, "Fee owed should be half of total fee.");
         deal(userA, feeOwed);
         vm.prank(userA);
@@ -1218,10 +1218,19 @@ contract LimitOrderRegistryTest is Test {
         registry.claimOrder{ value: feeOwed }(4, userE);
 
         // Expected USDC balance.
-        expectedBalance = 1265276111;
+        expectedBalance = 1264643473;
         assertEq(USDC.balanceOf(userE), expectedBalance, "User E USDC balance should equal expected.");
 
         assertEq(positionManger.balanceOf(address(registry)), 1, "Limit Order Registry should only have 1 position.");
+
+        deal(address(USDC), address(this), 0);
+        deal(address(WETH), address(this), 0);
+        // Limit Order Registry should have both USDC and WETH fees.
+        registry.withdrawSwapFees(address(USDC));
+        registry.withdrawSwapFees(address(WETH));
+
+        assertGt(USDC.balanceOf(address(this)), 0, "Owner should have received USDC fees.");
+        assertGt(WETH.balanceOf(address(this)), 0, "Owner should have received WETH fees.");
     }
 
     function viewList(IUniswapV3Pool pool) public view returns (uint256[10] memory heads, uint256[10] memory tails) {
