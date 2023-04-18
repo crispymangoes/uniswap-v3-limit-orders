@@ -60,14 +60,14 @@ contract MaticLimitOrderRegistryScript is Script {
         registry.setMinimumAssets(1, WrappedNative);
 
         // Setup pools.
-        uint256 upkeepFunds = 5e18;
-        LINK.approve(address(registry), 2 * upkeepFunds);
+        uint256 upkeepFunds = 0;
+        // LINK.approve(address(registry), 2 * upkeepFunds);
         registry.setupLimitOrder(USDC_WETH_05_POOL, upkeepFunds);
         registry.setupLimitOrder(WMATIC_USDC_05_POOL, upkeepFunds);
 
         // Create Trade Manager.
-        LINK.approve(address(factory), upkeepFunds);
-        manager = factory.createTradeManager(registry, LINK, REGISTRAR, upkeepFunds);
+        // LINK.approve(address(factory), upkeepFunds);
+        // manager = factory.createTradeManager(registry, LINK, REGISTRAR, upkeepFunds);
 
         vm.stopBroadcast();
     }

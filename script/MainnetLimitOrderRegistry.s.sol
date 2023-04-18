@@ -45,16 +45,16 @@ contract MainnetLimitOrderRegistryScript is Script {
         // Deploy limit order registry.
         registry = new LimitOrderRegistry(owner, positionManger, WrappedNative, LINK, REGISTRAR, fastGasFeed);
         lens = new LimitOrderRegistryLens(registry);
-        TradeManager implementation = new TradeManager();
+        // TradeManager implementation = new TradeManager();
         // Initialize implementation.
-        implementation.initialize(
-            address(0),
-            LimitOrderRegistry(address(0)),
-            LinkTokenInterface(address(0)),
-            KeeperRegistrar(address(0)),
-            0
-        );
-        factory = new TradeManagerFactory(address(implementation));
+        // implementation.initialize(
+        // address(0),
+        // LimitOrderRegistry(address(0)),
+        // LinkTokenInterface(address(0)),
+        // KeeperRegistrar(address(0)),
+        // 0
+        // );
+        // factory = new TradeManagerFactory(address(implementation));
 
         registry.setMinimumAssets(100e6, USDC);
         registry.setMinimumAssets(0.05e18, WETH);
@@ -66,7 +66,7 @@ contract MainnetLimitOrderRegistryScript is Script {
 
         // Create Trade Manager.
         // LINK.approve(address(factory), upkeepFunds);
-        manager = factory.createTradeManager(registry, LINK, REGISTRAR, upkeepFunds);
+        // manager = factory.createTradeManager(registry, LINK, REGISTRAR, upkeepFunds);
 
         vm.stopBroadcast();
     }
