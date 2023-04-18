@@ -195,7 +195,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     /**
      * @notice The max possible gas the owner can set for the gas limit.
      */
-    uint32 public constant MAX_GAS_LIMIT = 500_000;
+    uint32 public constant MAX_GAS_LIMIT = 750_000;
 
     /**
      * @notice The max possible gas price the owner can set for the gas price.
@@ -314,6 +314,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         maxFillsPerUpkeep = newVal;
     }
 
+    // TODO make this work for v1.2 or v2
     /**
      * @notice Allows owner to setup a new limit order for a new pool.
      * @dev New Limit orders, should have a keeper to fulfill orders.
@@ -804,7 +805,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                 // Reset user count.
                 order.userCount = 0;
                 orderFilled = true;
-                emit OrderFilled(order.batchId, address(pool));
             } else break;
         }
 
@@ -1142,6 +1142,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         // Zero out order balances.
         order.token0Amount = 0;
         order.token1Amount = 0;
+
+        emit OrderFilled(order.batchId, address(pool));
     }
 
     /**
