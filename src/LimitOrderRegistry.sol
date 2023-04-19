@@ -799,12 +799,12 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                 order.tail = 0;
                 // Update bool to indicate batch order is ready to handle claims.
                 claim[order.batchId].isReadyForClaim = true;
-                // Zero out orders batch id.
-                order.batchId = 0;
                 // Reset user count.
                 order.userCount = 0;
                 orderFilled = true;
                 emit OrderFilled(order.batchId, address(pool));
+                // Zero out orders batch id, only after emitting the event
+                order.batchId = 0;
             } else break;
         }
 
