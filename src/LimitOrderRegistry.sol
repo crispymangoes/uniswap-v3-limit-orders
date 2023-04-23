@@ -259,6 +259,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     error LimitOrderRegistry__InvalidGasPrice();
     error LimitOrderRegistry__InvalidFillsPerUpkeep();
     error LimitOrderRegistry__AmountShouldBeZero();
+    error LimitOrderRegistry__DirectionMisMatch();
 
     /*//////////////////////////////////////////////////////////////
                                  ENUMS
@@ -537,6 +538,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             // Check if the position id is already being used in List.
             BatchOrder memory order = orderBook[details.positionId];
             if (order.token0Amount > 0 || order.token1Amount > 0) {
+                // Check that supplied direction and order.direction are the same.
+                if (direction != order.direction) revert LimitOrderRegistry__DirectionMisMatch();
                 // Need to add liquidity.
                 PoolData memory data = poolToData[pool];
                 _addToPosition(data, details.positionId, details.amount0, details.amount1, direction);

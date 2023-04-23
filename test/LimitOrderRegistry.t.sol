@@ -524,21 +524,17 @@ contract LimitOrderRegistryTest is Test {
         }
 
         // Fill List with orders.
-        vm.startPrank(userA);
         // User A places a repeat order.
         _createOrder(userA, USDC_WETH_05_POOL, 20, USDC, usdcAmount);
         _createOrder(userA, USDC_WETH_05_POOL, 20, USDC, usdcAmount);
         _createOrder(userA, USDC_WETH_05_POOL, 40, USDC, usdcAmount);
         _createOrder(userA, USDC_WETH_05_POOL, 80, USDC, usdcAmount);
-        vm.stopPrank();
 
-        vm.startPrank(userB);
         // User B joins User A's order.
         _createOrder(userB, USDC_WETH_05_POOL, 40, USDC, usdcAmount);
         _createOrder(userB, USDC_WETH_05_POOL, -20, WETH, wethAmount);
         _createOrder(userB, USDC_WETH_05_POOL, -40, WETH, wethAmount);
         _createOrder(userB, USDC_WETH_05_POOL, -80, WETH, wethAmount);
-        vm.stopPrank();
 
         uint64 userCount;
         (, , , userCount, , , , , ) = registry.orderBook(id0);
@@ -767,21 +763,17 @@ contract LimitOrderRegistryTest is Test {
         address userB = vm.addr(20);
 
         // Fill List with orders.
-        vm.startPrank(userA);
         // User A places a repeat order.
         _createOrder(userA, USDC_WETH_05_POOL, 20, USDC, usdcAmount);
         _createOrder(userA, USDC_WETH_05_POOL, 20, USDC, usdcAmount);
         _createOrder(userA, USDC_WETH_05_POOL, 40, USDC, usdcAmount);
         _createOrder(userA, USDC_WETH_05_POOL, 80, USDC, usdcAmount);
-        vm.stopPrank();
 
-        vm.startPrank(userB);
         // User B joins User A's order.
         _createOrder(userB, USDC_WETH_05_POOL, 40, USDC, usdcAmount);
         _createOrder(userB, USDC_WETH_05_POOL, -20, WETH, wethAmount);
         _createOrder(userB, USDC_WETH_05_POOL, -40, WETH, wethAmount);
         _createOrder(userB, USDC_WETH_05_POOL, -80, WETH, wethAmount);
-        vm.stopPrank();
 
         // Move price so that orders towards head are fulfillable.
         {
@@ -1040,13 +1032,9 @@ contract LimitOrderRegistryTest is Test {
         address userE = vm.addr(50);
 
         // Users A and B place order 20 ticks out.
-        vm.startPrank(userA);
         _createOrder(userA, USDC_WETH_05_POOL, 20, USDC, usdcAmount);
-        vm.stopPrank();
 
-        vm.startPrank(userB);
         _createOrder(userB, USDC_WETH_05_POOL, 20, USDC, usdcAmount);
-        vm.stopPrank();
 
         {
             (bool direction, , , uint64 userCount, uint128 batchId, , , , ) = registry.orderBook(id0);
@@ -1095,9 +1083,7 @@ contract LimitOrderRegistryTest is Test {
         vm.stopPrank();
 
         // User C places identical order to Users A and B.
-        vm.startPrank(userC);
         _createOrder(userC, USDC_WETH_05_POOL, 20, USDC, usdcAmount);
-        vm.stopPrank();
 
         // User B tries to cancel filled order.
         vm.startPrank(userB);
@@ -1127,9 +1113,7 @@ contract LimitOrderRegistryTest is Test {
         }
 
         // User D places identical order to Users A, B, and C.
-        vm.startPrank(userD);
         _createOrder(userD, USDC_WETH_05_POOL, 20, USDC, usdcAmount);
-        vm.stopPrank();
 
         {
             (bool direction, , , uint64 userCount, uint128 batchId, , , , ) = registry.orderBook(id0);
@@ -1158,9 +1142,7 @@ contract LimitOrderRegistryTest is Test {
         registry.performUpkeep(performData);
 
         // User E places an order going opposite direction, but uses the same underlying LP position.
-        vm.startPrank(userE);
         _createOrder(userE, USDC_WETH_05_POOL, -30, WETH, wethAmount);
-        vm.stopPrank();
 
         {
             (bool direction, , , uint64 userCount, uint128 batchId, , , , ) = registry.orderBook(id0);
@@ -1233,6 +1215,44 @@ contract LimitOrderRegistryTest is Test {
         assertGt(WETH.balanceOf(address(this)), 0, "Owner should have received WETH fees.");
     }
 
+    function testAddingToUnfulfilledOrderWithWrongDirection() external {
+        // User creates an order.
+        address user = vm.addr(1111);
+        uint96 usdcAmount = 1_000e6;
+        _createOrder(user, USDC_WETH_05_POOL, 20, USDC, usdcAmount);
+
+        // Attacker moves pool tick, so that they can place an order in
+        // the opposite direction, but using the same LP position.
+
+        (, int24 tick, , , , , ) = USDC_WETH_05_POOL.slot0();
+        int24 targetTick = tick - (tick % USDC_WETH_05_POOL.tickSpacing()) + 20;
+
+        // Price moves to fill order.
+        {
+            address[] memory path = new address[](2);
+            path[0] = address(WETH);
+            path[1] = address(USDC);
+
+            uint24[] memory poolFees = new uint24[](1);
+            poolFees[0] = 500;
+
+            uint256 swapAmount = 200e18;
+            deal(address(WETH), address(this), swapAmount);
+            _swap(path, poolFees, swapAmount);
+        }
+
+        // Attacker tries to enter the users order.
+        address attacker = vm.addr(333);
+        // Note the attacker is supplying the same amount of WETH, as the user supplied USDC.
+        deal(address(WETH), attacker, usdcAmount);
+
+        vm.startPrank(attacker);
+        WETH.approve(address(registry), usdcAmount);
+        vm.expectRevert(abi.encodeWithSelector(LimitOrderRegistry.LimitOrderRegistry__DirectionMisMatch.selector));
+        registry.newOrder(USDC_WETH_05_POOL, targetTick - 10, usdcAmount, false, 0);
+        vm.stopPrank();
+    }
+
     function viewList(IUniswapV3Pool pool) public view returns (uint256[10] memory heads, uint256[10] memory tails) {
         uint256 next;
         (next, , , , ) = registry.poolToData(pool);
@@ -1286,9 +1306,11 @@ contract LimitOrderRegistryTest is Test {
         targetTick += tickDelta;
 
         deal(address(assetIn), sender, amount);
+        vm.startPrank(sender);
         assetIn.approve(address(registry), amount);
         bool direction = tickDelta > 0;
         registry.newOrder(pool, targetTick, amount, direction, 0);
+        vm.stopPrank();
 
         return targetTick;
     }
