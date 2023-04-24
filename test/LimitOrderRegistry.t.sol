@@ -24,12 +24,14 @@ contract LimitOrderRegistryTest is Test {
     LinkTokenInterface private LINK = LinkTokenInterface(0xb0897686c545045aFc77CF20eC7A532E3120E0F1);
 
     KeeperRegistrar private REGISTRAR = KeeperRegistrar(0x9a811502d843E5a03913d5A2cfb646c11463467A);
+    KeeperRegistrar private REGISTRAR_V1 = KeeperRegistrar(0xDb8e8e2ccb5C033938736aa89Fe4fa1eDfD15a1d);
 
     ERC20 private USDC = ERC20(0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174);
     ERC20 private WETH = ERC20(0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619);
     ERC20 private WMATIC = ERC20(0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270);
 
     IUniswapV3Pool private USDC_WETH_05_POOL = IUniswapV3Pool(0x45dDa9cb7c25131DF268515131f647d726f50608);
+    IUniswapV3Pool private USDC_WETH_3_POOL = IUniswapV3Pool(0x0e44cEb592AcFC5D3F09D996302eB4C499ff8c10);
 
     address private fastGasFeed = address(0);
 
@@ -138,6 +140,14 @@ contract LimitOrderRegistryTest is Test {
         deal(address(WMATIC), address(this), 300_000 * 30e9);
         WMATIC.approve(address(registry), 300_000 * 30e9);
         registry.claimOrder(2, address(this));
+    }
+
+    function testUpkeepV1Creation() external {
+        registry.setRegistrar(REGISTRAR_V1);
+
+        deal(address(LINK), address(this), 10e18);
+        LINK.approve(address(registry), 10e18);
+        registry.setupLimitOrder(USDC_WETH_3_POOL, 10e18);
     }
 
     function testLinkedListCreation() external {

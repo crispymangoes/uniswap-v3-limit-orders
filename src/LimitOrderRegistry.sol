@@ -208,6 +208,12 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
      */
     uint16 public constant MAX_FILLS_PER_UPKEEP = 20;
 
+    /**
+     * @notice Function selector used to create V1 Upkeep versions.
+     */
+    bytes4 private constant FUNC_SELECTOR =
+        bytes4(keccak256("register(string,bytes,address,uint32,address,bytes,uint96,uint8,address)"));
+
     /*//////////////////////////////////////////////////////////////
                                  MODIFIERS
     //////////////////////////////////////////////////////////////*/
@@ -315,7 +321,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         maxFillsPerUpkeep = newVal;
     }
 
-    // TODO make this work for v1.2 or v2
     /**
      * @notice Allows owner to setup a new limit order for a new pool.
      * @dev New Limit orders, should have a keeper to fulfill orders.
@@ -328,20 +333,37 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         // Create Upkeep.
         if (initialUpkeepFunds > 0) {
             // Owner wants to automatically create an upkeep for new pool.
-            // SafeTransferLib.safeTransferFrom(ERC20(address(LINK)), owner, address(this), initialUpkeepFunds);
             ERC20(address(LINK)).safeTransferFrom(owner, address(this), initialUpkeepFunds);
-            ERC20(address(LINK)).safeApprove(address(registrar), initialUpkeepFunds);
-            RegistrationParams memory params = RegistrationParams({
-                name: "Limit Order Registry",
-                encryptedEmail: abi.encode(0),
-                upkeepContract: address(this),
-                gasLimit: uint32(maxFillsPerUpkeep * upkeepGasLimit),
-                adminAddress: owner,
-                checkData: abi.encode(pool),
-                offchainConfig: abi.encode(0),
-                amount: uint96(initialUpkeepFunds)
-            });
-            registrar.registerUpkeep(params);
+            if (bytes(registrar.typeAndVersion())[16] == bytes("1")[0]) {
+                // Use V1 Upkeep Registration.
+                bytes memory data = abi.encodeWithSelector(
+                    FUNC_SELECTOR,
+                    "Limit Order Registry",
+                    abi.encode(0),
+                    address(this),
+                    uint32(maxFillsPerUpkeep * upkeepGasLimit),
+                    owner,
+                    abi.encode(pool),
+                    uint96(initialUpkeepFunds),
+                    77,
+                    address(this)
+                );
+                LINK.transferAndCall(address(registrar), initialUpkeepFunds, data);
+            } else {
+                // Use V2 Upkeep Registration.
+                ERC20(address(LINK)).safeApprove(address(registrar), initialUpkeepFunds);
+                RegistrationParams memory params = RegistrationParams({
+                    name: "Limit Order Registry",
+                    encryptedEmail: abi.encode(0),
+                    upkeepContract: address(this),
+                    gasLimit: uint32(maxFillsPerUpkeep * upkeepGasLimit),
+                    adminAddress: owner,
+                    checkData: abi.encode(pool),
+                    offchainConfig: abi.encode(0),
+                    amount: uint96(initialUpkeepFunds)
+                });
+                registrar.registerUpkeep(params);
+            }
         }
 
         // poolToData
