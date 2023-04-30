@@ -72,6 +72,12 @@ contract TradeManager is Initializable, AutomationCompatibleInterface, Owned {
      */
     bool public claimToOwner;
 
+    /**
+     * @notice Function selector used to create V1 Upkeep versions.
+     */
+    bytes4 private constant FUNC_SELECTOR =
+        bytes4(keccak256("register(string,bytes,address,uint32,address,bytes,uint96,uint8,address)"));
+
     constructor() Owned(address(0)) {}
 
     /*//////////////////////////////////////////////////////////////
@@ -98,19 +104,38 @@ contract TradeManager is Initializable, AutomationCompatibleInterface, Owned {
 
         // Create a new upkeep.
         if (initialUpkeepFunds > 0) {
+            // Owner wants to automatically create an upkeep for new pool.
             ERC20(address(LINK)).safeTransferFrom(msg.sender, address(this), initialUpkeepFunds);
-            ERC20(address(LINK)).safeApprove(address(registrar), initialUpkeepFunds);
-            RegistrationParams memory params = RegistrationParams({
-                name: "Trade Manager",
-                encryptedEmail: abi.encode(0),
-                upkeepContract: address(this),
-                gasLimit: UPKEEP_GAS_LIMIT,
-                adminAddress: user,
-                checkData: abi.encode(0),
-                offchainConfig: abi.encode(0),
-                amount: uint96(initialUpkeepFunds)
-            });
-            registrar.registerUpkeep(params);
+            if (bytes(registrar.typeAndVersion())[16] == bytes("1")[0]) {
+                // Use V1 Upkeep Registration.
+                bytes memory data = abi.encodeWithSelector(
+                    FUNC_SELECTOR,
+                    "Trade Manager",
+                    abi.encode(0),
+                    address(this),
+                    UPKEEP_GAS_LIMIT,
+                    user,
+                    abi.encode(0),
+                    uint96(initialUpkeepFunds),
+                    77,
+                    address(this)
+                );
+                LINK.transferAndCall(address(registrar), initialUpkeepFunds, data);
+            } else {
+                // Use V2 Upkeep Registration.
+                ERC20(address(LINK)).safeApprove(address(registrar), initialUpkeepFunds);
+                RegistrationParams memory params = RegistrationParams({
+                    name: "Trade Manager",
+                    encryptedEmail: abi.encode(0),
+                    upkeepContract: address(this),
+                    gasLimit: UPKEEP_GAS_LIMIT,
+                    adminAddress: user,
+                    checkData: abi.encode(0),
+                    offchainConfig: abi.encode(0),
+                    amount: uint96(initialUpkeepFunds)
+                });
+                registrar.registerUpkeep(params);
+            }
         }
     }
 

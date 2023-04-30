@@ -25,6 +25,7 @@ contract TradeManagerTest is Test {
     LinkTokenInterface private LINK = LinkTokenInterface(0xb0897686c545045aFc77CF20eC7A532E3120E0F1);
 
     KeeperRegistrar private REGISTRAR = KeeperRegistrar(0x9a811502d843E5a03913d5A2cfb646c11463467A);
+    KeeperRegistrar private REGISTRAR_V1 = KeeperRegistrar(0xDb8e8e2ccb5C033938736aa89Fe4fa1eDfD15a1d);
 
     ERC20 private USDC = ERC20(0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174);
     ERC20 private WETH = ERC20(0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619);
@@ -313,6 +314,12 @@ contract TradeManagerTest is Test {
         // Owner orders should be of length 0.
         ids = manager.getOwnerBatchIds();
         assertEq(ids.length, 0, "ids should be of length 0.");
+    }
+
+    function testUpkeepV1Creation() external {
+        deal(address(LINK), address(this), 10e18);
+        LINK.approve(address(factory), 10e18);
+        factory.createTradeManager(registry, LINK, REGISTRAR_V1, 10e18);
     }
 
     function _createOrder(
