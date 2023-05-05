@@ -1267,12 +1267,27 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         order.tail = 0;
     }
 
+    uint256 public constant FAST_GAS_HEARTBEAT = 7200;
+
     /**
      * @notice Helper function to get the gas price used for fee calculation.
      */
     function getGasPrice() public view returns (uint256) {
         // If gas feed is set use it.
-        if (fastGasFeed != address(0)) return uint256(IChainlinkAggregator(fastGasFeed).latestAnswer());
+        if (fastGasFeed != address(0)) {
+            (, int256 _answer, , uint256 _timestamp, ) = IChainlinkAggregator(fastGasFeed).latestRoundData();
+            uint256 timeSinceLastUpdate = block.timestamp - _timestamp;
+            // Check answer is not stale.
+            if (timeSinceLastUpdate > FAST_GAS_HEARTBEAT) {
+                // If answer is stale use owner set value.
+                // Multiply by 1e9 to convert gas price to gwei
+                return uint256(upkeepGasPrice) * 1e9;
+            } else {
+                // Else use the datafeed value.
+                uint256 answer = uint256(_answer);
+                return answer;
+            }
+        }
         // Else use owner set value.
         return uint256(upkeepGasPrice) * 1e9; // Multiply by 1e9 to convert gas price to gwei
     }

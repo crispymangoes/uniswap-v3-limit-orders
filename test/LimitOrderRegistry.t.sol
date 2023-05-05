@@ -1225,6 +1225,7 @@ contract LimitOrderRegistryTest is Test {
         assertGt(WETH.balanceOf(address(this)), 0, "Owner should have received WETH fees.");
     }
 
+    // Audit C1 Mitigation.
     function testAddingToUnfulfilledOrderWithWrongDirection() external {
         // User creates an order.
         address user = vm.addr(1111);
