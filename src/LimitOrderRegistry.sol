@@ -209,6 +209,12 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     uint16 public constant MAX_FILLS_PER_UPKEEP = 20;
 
     /**
+     * @notice The ETH Fast Gas Feed heartbeat.
+     * @dev If answer is stale, owner set gas price is used.
+     */
+    uint256 public constant FAST_GAS_HEARTBEAT = 7200;
+
+    /**
      * @notice Function selector used to create V1 Upkeep versions.
      */
     bytes4 private constant FUNC_SELECTOR =
@@ -1266,8 +1272,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         order.head = 0;
         order.tail = 0;
     }
-
-    uint256 public constant FAST_GAS_HEARTBEAT = 7200;
 
     /**
      * @notice Helper function to get the gas price used for fee calculation.
