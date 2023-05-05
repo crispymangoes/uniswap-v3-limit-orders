@@ -62,7 +62,7 @@ contract MainnetLimitOrderRegistryScript is Script {
         // Setup pool.
         uint256 upkeepFunds = 0;
         // LINK.approve(address(registry), upkeepFunds);
-        registry.setupLimitOrder(USDC_WETH_05_POOL, upkeepFunds);
+        // registry.setupLimitOrder(USDC_WETH_05_POOL, upkeepFunds);
 
         // Create Trade Manager.
         // LINK.approve(address(factory), upkeepFunds);
