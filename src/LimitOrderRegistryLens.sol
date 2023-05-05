@@ -38,6 +38,7 @@ contract LimitOrderRegistryLens {
      * @notice Walks the `orderBook` in a specific `direction`, returning an array of BatchOrderViewData with length of up to `returnCount`.
      * @param pool UniswapV3 pool whose order book you want to query
      * @param startingNode the node to start walking from
+     *        - Non zero startingNode should be in the linked list, otherwise return value is wrong.
      * @param returnCount the max number of values in return array
      * @param direction to walk the order book
      */
