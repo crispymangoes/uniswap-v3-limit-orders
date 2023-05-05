@@ -61,6 +61,7 @@ contract TradeManager is Initializable, AutomationCompatibleInterface, Owned {
 
     /**
      * @notice The max amount of claims that can happen in a single upkeep.
+     * @dev When changing this value also change line 260, abi.decode.
      */
     uint256 public constant MAX_CLAIMS = 10;
 
@@ -257,7 +258,7 @@ contract TradeManager is Initializable, AutomationCompatibleInterface, Owned {
     function performUpkeep(bytes calldata performData) external {
         // Accept claim array and claim all orders
         ClaimInfo[MAX_CLAIMS] memory claimInfo = abi.decode(performData, (ClaimInfo[10]));
-        for (uint256 i; i < 10; ++i) {
+        for (uint256 i; i < MAX_CLAIMS; ++i) {
             if (limitOrderRegistry.isOrderReadyForClaim(claimInfo[i].batchId)) {
                 (ERC20 asset, uint256 assets) = limitOrderRegistry.claimOrder{ value: claimInfo[i].fee }(
                     claimInfo[i].batchId,
