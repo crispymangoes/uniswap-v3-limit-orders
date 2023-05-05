@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.10;
+pragma solidity ^0.8.16;
 
 interface NonFungiblePositionManager {
     event Approval(address indexed owner, address indexed approved, uint256 indexed tokenId);
