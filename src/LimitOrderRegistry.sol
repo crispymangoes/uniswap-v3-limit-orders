@@ -845,22 +845,18 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
 
         // Continue walking the list towards head/tail until we find the next order that matches walk direction.
         // Then update center.
+        while (target != 0) {
+            // Note use storage here because memory makes the contract too large.
+            BatchOrder storage order = orderBook[target];
+            if (order.direction == walkDirection) break;
+            target = walkDirection ? order.head : order.tail;
+        }
         if (walkDirection) {
-            while (target != 0) {
-                BatchOrder storage order = orderBook[target];
-                if (order.direction == walkDirection) break;
-                target = order.head;
-            }
             data.centerHead = target;
             // Need to reconnect list.
             orderBook[data.centerTail].head = target;
             if (target != 0) orderBook[target].tail = data.centerTail;
         } else {
-            while (target != 0) {
-                BatchOrder storage order = orderBook[target];
-                if (order.direction == walkDirection) break;
-                target = order.tail;
-            }
             data.centerTail = target;
             // Need to reconnect list.
             orderBook[data.centerHead].tail = target;
