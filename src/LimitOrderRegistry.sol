@@ -737,6 +737,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             }
 
             (amount0, amount1) = _takeFromPosition(positionId, pool, liquidityPercentToTake);
+            emit CancelOrder(sender, amount0, amount1, order);
             if (liquidityPercentToTake == 1e18) {
                 _removeOrderFromList(positionId, pool, order);
                 // Zero out balances for cancelled order.
@@ -754,8 +755,6 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             else revert LimitOrderRegistry__NoLiquidityInOrder();
             if (amount0 > 0) revert LimitOrderRegistry__AmountShouldBeZero();
         }
-
-        emit CancelOrder(sender, amount0, amount1, order);
     }
 
     /*//////////////////////////////////////////////////////////////
