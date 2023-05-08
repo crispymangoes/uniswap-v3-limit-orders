@@ -12,6 +12,7 @@ import { LinkTokenInterface } from "@chainlink/contracts/src/v0.8/interfaces/Lin
 import { IKeeperRegistrar, RegistrationParams } from "src/interfaces/chainlink/IKeeperRegistrar.sol";
 import { Context } from "@openzeppelin/contracts/utils/Context.sol";
 import { IChainlinkAggregator } from "src/interfaces/chainlink/IChainlinkAggregator.sol";
+import { console } from "@forge-std/Test.sol";
 
 /**
  * @title Limit Order Registry
@@ -825,7 +826,9 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             if (status == OrderStatus.ITM) {
                 _fulfillOrder(target, pool, order, estimatedFee);
                 target = walkDirection ? order.head : order.tail;
-                // Zero out orders head and tail values removing order from the list.
+                // Reconnect List and Zero out orders head and tail values removing order from the list.
+                orderBook[order.tail].head = order.head;
+                orderBook[order.head].tail = order.tail;
                 order.head = 0;
                 order.tail = 0;
                 // Update bool to indicate batch order is ready to handle claims.
@@ -840,13 +843,24 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
 
         if (!orderFilled) revert LimitOrderRegistry__NoOrdersToFulfill();
 
-        // Update center.
+        // Continue walking the list towards head/tail until we find the next order that matches walk direction.
+        // Then update center.
         if (walkDirection) {
+            while (target != 0) {
+                BatchOrder storage order = orderBook[target];
+                if (order.direction == walkDirection) break;
+                target = order.head;
+            }
             data.centerHead = target;
             // Need to reconnect list.
             orderBook[data.centerTail].head = target;
             if (target != 0) orderBook[target].tail = data.centerTail;
         } else {
+            while (target != 0) {
+                BatchOrder storage order = orderBook[target];
+                if (order.direction == walkDirection) break;
+                target = order.tail;
+            }
             data.centerTail = target;
             // Need to reconnect list.
             orderBook[data.centerHead].tail = target;

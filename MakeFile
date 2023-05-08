@@ -19,7 +19,7 @@ build:; forge build
 
 test :; forge test 
 
-forkTest :; forge test -vv --fork-url ${MATIC_RPC_URL} --fork-block-number ${POLYGON_BLOCK_NUMBER} --match-test testAttackerTangling
+forkTest :; forge test -vv --fork-url ${MATIC_RPC_URL} --fork-block-number ${POLYGON_BLOCK_NUMBER}
 
 build-contracts :; forge build --sizes --force --skip test --skip script
 
