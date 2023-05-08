@@ -28,6 +28,7 @@ contract MainnetLimitOrderRegistryScript is Script {
     ERC20 private WETH = ERC20(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
 
     address private owner = 0xf416e1FE92527c56Db9DC8Eaff7630F6e5a2E2eD;
+    address private realOwner = 0x958892b4a0512b28AaAC890FC938868BBD42f064;
     INonFungiblePositionManager private positionManger =
         INonFungiblePositionManager(0xC36442b4a4522E871399CD717aBDD847Ab11FE88);
 
@@ -43,7 +44,7 @@ contract MainnetLimitOrderRegistryScript is Script {
         vm.startBroadcast();
 
         // Deploy limit order registry.
-        registry = new LimitOrderRegistry(owner, positionManger, WrappedNative, LINK, REGISTRAR, fastGasFeed);
+        registry = new LimitOrderRegistry(realOwner, positionManger, WrappedNative, LINK, REGISTRAR, fastGasFeed);
         // lens = new LimitOrderRegistryLens(registry);
         // TradeManager implementation = new TradeManager();
         // Initialize implementation.
