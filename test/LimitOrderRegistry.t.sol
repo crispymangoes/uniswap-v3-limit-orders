@@ -1264,7 +1264,7 @@ contract LimitOrderRegistryTest is Test {
         vm.stopPrank();
     }
 
-    function testAttackerTanglingListPriceStaysTheSame() external {
+    function testAttackerTanglingListTowardsHeadPriceStaysTheSame() external {
         // Assume ETH price is $1,200, and the order book currently looks like.
         // 1,000 - 1,100 - 1,205 - 1,300
         // Setup Linked list.
@@ -1315,7 +1315,7 @@ contract LimitOrderRegistryTest is Test {
         _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
     }
 
-    function testAttackerTanglingListPriceReverts() external {
+    function testAttackerTanglingListTowardsHeadPriceReverts() external {
         // Assume ETH price is $1,200, and the order book currently looks like.
         // 1,000 - 1,100 - 1,205 - 1,300
         // Setup Linked list.
@@ -1374,7 +1374,7 @@ contract LimitOrderRegistryTest is Test {
         _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
     }
 
-    function testAttackerTanglingListPriceContinuesInAttackersSkew() external {
+    function testAttackerTanglingListTowardsHeadPriceContinuesInAttackersSkew() external {
         // Assume ETH price is $1,200, and the order book currently looks like.
         // 1,000 - 1,100 - 1,205 - 1,300
         // Setup Linked list.
@@ -1441,6 +1441,186 @@ contract LimitOrderRegistryTest is Test {
         assertEq(upkeepNeeded, true, "Upkeep should be needed.");
         registry.performUpkeep(performData);
         expectedHeads[0] = 0;
+        _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
+    }
+
+    function testAttackerTanglingListTowardsTailPriceStaysTheSame() external {
+        // Assume ETH price is $1,200, and the order book currently looks like.
+        // 1,000 - 1,100 - 1,205 - 1,300
+        // Setup Linked list.
+        uint96 usdcAmount = 1_000e6;
+        _createOrder(address(this), USDC_WETH_05_POOL, 100, USDC, usdcAmount);
+        _createOrder(address(this), USDC_WETH_05_POOL, 200, USDC, usdcAmount);
+
+        uint96 wethAmount = 1e18;
+        _createOrder(address(this), USDC_WETH_05_POOL, -100, WETH, wethAmount);
+        _createOrder(address(this), USDC_WETH_05_POOL, -200, WETH, wethAmount);
+
+        // Make sure list is setup correctly.
+        uint256[10] memory expectedHeads = [id0, id1, 0, 0, 0, 0, 0, 0, 0, 0];
+        uint256[10] memory expectedTails = [id2, id3, 0, 0, 0, 0, 0, 0, 0, 0];
+
+        _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
+
+        // Attacker skews price, then adds 2 orders that are SELL orders for ETH at a price above id0.
+        {
+            address[] memory path = new address[](2);
+            path[0] = address(USDC);
+            path[1] = address(WETH);
+
+            uint24[] memory poolFees = new uint24[](1);
+            poolFees[0] = 500;
+
+            uint256 swapAmount = 567_000e6;
+            deal(address(USDC), address(this), swapAmount);
+            _swap(path, poolFees, swapAmount);
+        }
+
+        // Attacker creates two orders.
+        _createOrder(address(this), USDC_WETH_05_POOL, 20, USDC, usdcAmount);
+        _createOrder(address(this), USDC_WETH_05_POOL, 40, USDC, usdcAmount);
+
+        // Now that the orders are created, attacker fulfills the current HEAD which is ITM.
+
+        // Calling performUpkeep will untangle the list.
+        (bool upkeepNeeded, bytes memory performData) = registry.checkUpkeep(abi.encode(USDC_WETH_05_POOL));
+        assertEq(upkeepNeeded, true, "Upkeep should be needed.");
+        registry.performUpkeep(performData);
+        expectedHeads[0] = id4;
+        expectedHeads[1] = id5;
+        expectedHeads[2] = id0;
+        expectedHeads[3] = id1;
+        expectedTails[0] = id3;
+        expectedTails[1] = 0;
+        _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
+    }
+
+    function testAttackerTanglingListTowardsTailPriceReverts() external {
+        // Assume ETH price is $1,200, and the order book currently looks like.
+        // 1,000 - 1,100 - 1,205 - 1,300
+        // Setup Linked list.
+        uint96 usdcAmount = 1_000e6;
+        _createOrder(address(this), USDC_WETH_05_POOL, 100, USDC, usdcAmount);
+        _createOrder(address(this), USDC_WETH_05_POOL, 200, USDC, usdcAmount);
+
+        uint96 wethAmount = 1e18;
+        _createOrder(address(this), USDC_WETH_05_POOL, -100, WETH, wethAmount);
+        _createOrder(address(this), USDC_WETH_05_POOL, -200, WETH, wethAmount);
+
+        // Make sure list is setup correctly.
+        uint256[10] memory expectedHeads = [id0, id1, 0, 0, 0, 0, 0, 0, 0, 0];
+        uint256[10] memory expectedTails = [id2, id3, 0, 0, 0, 0, 0, 0, 0, 0];
+
+        _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
+
+        // Attacker skews price, then adds 2 orders that are BUY orders for ETH at a price above id0.
+        {
+            address[] memory path = new address[](2);
+            path[0] = address(USDC);
+            path[1] = address(WETH);
+
+            uint24[] memory poolFees = new uint24[](1);
+            poolFees[0] = 500;
+
+            uint256 swapAmount = 567_000e6;
+            deal(address(USDC), address(this), swapAmount);
+            _swap(path, poolFees, swapAmount);
+        }
+
+        // Attacker creates two orders.
+        _createOrder(address(this), USDC_WETH_05_POOL, 20, USDC, usdcAmount);
+        _createOrder(address(this), USDC_WETH_05_POOL, 40, USDC, usdcAmount);
+
+        // Price reverts to what it was before.
+        {
+            address[] memory path = new address[](2);
+            path[0] = address(WETH);
+            path[1] = address(USDC);
+
+            uint24[] memory poolFees = new uint24[](1);
+            poolFees[0] = 500;
+
+            uint256 swapAmount = 450e18;
+            deal(address(WETH), address(this), swapAmount);
+            _swap(path, poolFees, swapAmount);
+        }
+
+        // Calling performUpkeep will untangle the list.
+        (bool upkeepNeeded, bytes memory performData) = registry.checkUpkeep(abi.encode(USDC_WETH_05_POOL));
+        assertEq(upkeepNeeded, true, "Upkeep should be needed.");
+        registry.performUpkeep(performData);
+
+        // List should be what it was before.
+        _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
+    }
+
+    function testAttackerTanglingListTowardsTailPriceContinuesInAttackersSkew() external {
+        // Assume ETH price is $1,200, and the order book currently looks like.
+        // 1,000 - 1,100 - 1,205 - 1,300
+        // Setup Linked list.
+        uint96 usdcAmount = 1_000e6;
+        _createOrder(address(this), USDC_WETH_05_POOL, 100, USDC, usdcAmount);
+        _createOrder(address(this), USDC_WETH_05_POOL, 200, USDC, usdcAmount);
+
+        uint96 wethAmount = 1e18;
+        _createOrder(address(this), USDC_WETH_05_POOL, -100, WETH, wethAmount);
+        _createOrder(address(this), USDC_WETH_05_POOL, -200, WETH, wethAmount);
+
+        // Make sure list is setup correctly.
+        uint256[10] memory expectedHeads = [id0, id1, 0, 0, 0, 0, 0, 0, 0, 0];
+        uint256[10] memory expectedTails = [id2, id3, 0, 0, 0, 0, 0, 0, 0, 0];
+
+        _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
+
+        // Attacker skews price, then adds 2 orders that are BUY orders for ETH at a price above id0.
+        {
+            address[] memory path = new address[](2);
+            path[0] = address(USDC);
+            path[1] = address(WETH);
+
+            uint24[] memory poolFees = new uint24[](1);
+            poolFees[0] = 500;
+
+            uint256 swapAmount = 567_000e6;
+            deal(address(USDC), address(this), swapAmount);
+            _swap(path, poolFees, swapAmount);
+        }
+
+        // Attacker creates two orders.
+        _createOrder(address(this), USDC_WETH_05_POOL, 20, USDC, usdcAmount);
+        _createOrder(address(this), USDC_WETH_05_POOL, 40, USDC, usdcAmount);
+
+        // Price continues in direction of attackers skew.
+        {
+            address[] memory path = new address[](2);
+            path[0] = address(USDC);
+            path[1] = address(WETH);
+
+            uint24[] memory poolFees = new uint24[](1);
+            poolFees[0] = 500;
+
+            uint256 swapAmount = 567_000e6;
+            deal(address(USDC), address(this), swapAmount);
+            _swap(path, poolFees, swapAmount);
+        }
+
+        // Calling performUpkeep will untangle the list.
+        (bool upkeepNeeded, bytes memory performData) = registry.checkUpkeep(abi.encode(USDC_WETH_05_POOL));
+        assertEq(upkeepNeeded, true, "Upkeep should be needed.");
+        registry.performUpkeep(performData);
+        expectedHeads[0] = id4;
+        expectedHeads[1] = id5;
+        expectedHeads[2] = id0;
+        expectedHeads[3] = id1;
+        expectedTails[0] = id3;
+        expectedTails[1] = 0;
+        _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
+
+        // Perform upkeep needs to be called again since id5 was OTM.
+        (upkeepNeeded, performData) = registry.checkUpkeep(abi.encode(USDC_WETH_05_POOL));
+        assertEq(upkeepNeeded, true, "Upkeep should be needed.");
+        registry.performUpkeep(performData);
+        expectedTails[0] = 0;
         _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
     }
 
