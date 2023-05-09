@@ -15,10 +15,10 @@ import "forge-std/Script.sol";
 
 /**
  * @dev Run
- *      `source .env && forge script script/MaticLimitOrderRegistry.s.sol:MaticLimitOrderRegistryScript --rpc-url $MATIC_RPC_URL  --private-key $PRIVATE_KEY —optimize —optimizer-runs 200 --with-gas-price 300000000000 --verify --etherscan-api-key $POLYGONSCAN_KEY --broadcast --slow`
+ *      `source .env && forge script script/OptimismLimitOrderRegistry.s.sol:OptimismLimitOrderRegistryScript --rpc-url $OPTIMISM_RPC_URL  --private-key $PRIVATE_KEY —optimize —optimizer-runs 200 --with-gas-price 300000000000 --verify --etherscan-api-key $OPTIMISTIC_ETHERSCAN_KEY --broadcast --slow`
  * @dev Optionally can change `--with-gas-price` to something more reasonable
  */
-contract MaticLimitOrderRegistryScript is Script {
+contract OptimismLimitOrderRegistryScript is Script {
     LimitOrderRegistry private registry;
     LimitOrderRegistryLens private lens;
     TradeManagerFactory private factory;
@@ -29,9 +29,9 @@ contract MaticLimitOrderRegistryScript is Script {
     INonFungiblePositionManager private positionManger =
         INonFungiblePositionManager(0xC36442b4a4522E871399CD717aBDD847Ab11FE88);
 
-    ERC20 private WrappedNative = ERC20(0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270);
-    LinkTokenInterface private LINK = LinkTokenInterface(0xb0897686c545045aFc77CF20eC7A532E3120E0F1);
-    KeeperRegistrar private REGISTRAR = KeeperRegistrar(0x9a811502d843E5a03913d5A2cfb646c11463467A);
+    ERC20 private WrappedNative = ERC20(0x4200000000000000000000000000000000000006);
+    LinkTokenInterface private LINK = LinkTokenInterface(0x350a791Bfc2C21F9Ed5d10980Dad2e2638ffa7f6);
+    KeeperRegistrar private REGISTRAR = KeeperRegistrar(0x4F3AF332A30973106Fe146Af0B4220bBBeA748eC);
 
     function run() public {
         vm.startBroadcast();
