@@ -12,7 +12,6 @@ import { LinkTokenInterface } from "@chainlink/contracts/src/v0.8/interfaces/Lin
 import { IKeeperRegistrar, RegistrationParams } from "src/interfaces/chainlink/IKeeperRegistrar.sol";
 import { Context } from "@openzeppelin/contracts/utils/Context.sol";
 import { IChainlinkAggregator } from "src/interfaces/chainlink/IChainlinkAggregator.sol";
-import { console } from "@forge-std/Test.sol";
 
 /**
  * @title Limit Order Registry
