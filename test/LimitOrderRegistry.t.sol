@@ -68,6 +68,16 @@ contract LimitOrderRegistryTest is Test {
         registry.setupLimitOrder(USDC_WETH_05_POOL, 10e18);
     }
 
+    function test_OverflowingNewOrder() public {
+        uint96 amount = 340_316_398_560_794_542_918;
+        address msgSender = 0xE0b906ae06BfB1b54fad61E222b2E324D51e1da6;
+        deal(address(USDC), msgSender, amount);
+        vm.startPrank(msgSender);
+        USDC.approve(address(registry), amount);
+
+        registry.newOrder(USDC_WETH_05_POOL, 204900, amount, true, 0);
+    }
+
     // ========================================= INITIALIZATION TEST =========================================
 
     // ============================================= HAPPY PATH TEST =============================================
