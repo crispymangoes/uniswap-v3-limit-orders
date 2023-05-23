@@ -1038,8 +1038,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         else data.token1.safeApprove(address(POSITION_MANAGER), amount1);
 
         // 0.9999e18 accounts for rounding errors in the Uniswap V3 protocol.
-        uint128 amount0Min = amount0 == 0 ? 0 : (amount0 * 0.9999e18) / 1e18;
-        uint128 amount1Min = amount1 == 0 ? 0 : (amount1 * 0.9999e18) / 1e18;
+        uint128 amount0Min = amount0 == 0 ? 0 : (amount0 * 0.9999e4) / 1e4;
+        uint128 amount1Min = amount1 == 0 ? 0 : (amount1 * 0.9999e4) / 1e4;
 
         // Create mint params.
         NonFungiblePositionManager.MintParams memory params = NonFungiblePositionManager.MintParams({
