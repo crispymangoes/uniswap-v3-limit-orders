@@ -78,6 +78,7 @@ contract LimitOrderRegistryLens {
      * @param pool the Uniswap V3 pool you want to create an order in
      * @param startingNode the UniV3 position Id to start looking
      * @param targetTick the targetTick of the order you want to place
+     * @param direction the direction of the order
      * @return proposedHead , proposedTail pr the correct head and tail for the new order
      * @dev if both head and tail are zero, just pass in zero for the `startingNode`
      *      otherwise pass in either the nonzero head or nonzero tail for the `startingNode`
