@@ -1438,7 +1438,6 @@ contract LimitOrderRegistryTest is Test {
         (bool upkeepNeeded, bytes memory performData) = registry.checkUpkeep(abi.encode(USDC_WETH_05_POOL));
         assertEq(upkeepNeeded, true, "Upkeep should be needed.");
         registry.performUpkeep(performData);
-        // TODO think all the head orders are filled here bc the lists are separate.
         expectedHeads[0] = 0;
         expectedHeads[1] = 0;
         expectedTails[0] = id4;
@@ -1447,12 +1446,9 @@ contract LimitOrderRegistryTest is Test {
         expectedTails[3] = id3;
         _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
 
-        // // Perform upkeep needs to be called again since id5 was OTM.
-        // (upkeepNeeded, performData) = registry.checkUpkeep(abi.encode(USDC_WETH_05_POOL));
-        // assertEq(upkeepNeeded, true, "Upkeep should be needed.");
-        // registry.performUpkeep(performData);
-        // expectedHeads[0] = 0;
-        // _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
+        // Perform upkeep should not be needed.
+        (upkeepNeeded, performData) = registry.checkUpkeep(abi.encode(USDC_WETH_05_POOL));
+        assertEq(upkeepNeeded, false, "Upkeep should not be needed.");
     }
 
     function testAttackerTanglingListTowardsTailPriceStaysTheSame() external {
@@ -1623,17 +1619,50 @@ contract LimitOrderRegistryTest is Test {
         expectedHeads[1] = id5;
         expectedHeads[2] = id0;
         expectedHeads[3] = id1;
-        // TODO again since lists are seperate performUpkeep fulfills both tails in 1 call.
         expectedTails[0] = 0;
         expectedTails[1] = 0;
         _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
 
-        // // Perform upkeep needs to be called again since id5 was OTM.
-        // (upkeepNeeded, performData) = registry.checkUpkeep(abi.encode(USDC_WETH_05_POOL));
-        // assertEq(upkeepNeeded, true, "Upkeep should be needed.");
-        // registry.performUpkeep(performData);
-        // expectedTails[0] = 0;
-        // _checkList(USDC_WETH_05_POOL, expectedHeads, expectedTails);
+        // Perform upkeep shold not be needed.
+        (upkeepNeeded, performData) = registry.checkUpkeep(abi.encode(USDC_WETH_05_POOL));
+        assertEq(upkeepNeeded, false, "Upkeep should not be needed.");
+    }
+
+    function testFindSpotRevertsIfStartingNodeIsNotInTheList() external {
+        // Setup Linked list.
+        uint96 usdcAmount = 1_000e6;
+        _createOrder(address(this), USDC_WETH_05_POOL, 100, USDC, usdcAmount);
+        _createOrder(address(this), USDC_WETH_05_POOL, 200, USDC, usdcAmount);
+
+        uint96 wethAmount = 1e18;
+        _createOrder(address(this), USDC_WETH_05_POOL, -100, WETH, wethAmount);
+        _createOrder(address(this), USDC_WETH_05_POOL, -200, WETH, wethAmount);
+
+        (, int24 tick, , , , , ) = USDC_WETH_05_POOL.slot0();
+
+        int24 targetTick = 204580;
+        vm.expectRevert(
+            bytes(abi.encodeWithSelector(LimitOrderRegistry.LimitOrderRegistry__OrderNotInList.selector, id1))
+        );
+        registry.findSpot(USDC_WETH_05_POOL, id1, targetTick, false);
+
+        // This however DOES work, but this order is ITM, so trying to create it with `newOrder` reverts.
+        (uint256 head, ) = registry.findSpot(USDC_WETH_05_POOL, id1, targetTick, true);
+
+        vm.expectRevert(
+            bytes(
+                abi.encodeWithSelector(LimitOrderRegistry.LimitOrderRegistry__OrderITM.selector, tick, targetTick, true)
+            )
+        );
+        registry.newOrder(USDC_WETH_05_POOL, targetTick, usdcAmount, true, head);
+
+        // Make sure findSpot reverts if order is not in the list when creating a new order.
+        deal(address(WETH), address(this), wethAmount);
+        WETH.approve(address(registry), wethAmount);
+        vm.expectRevert(
+            bytes(abi.encodeWithSelector(LimitOrderRegistry.LimitOrderRegistry__OrderNotInList.selector, id0))
+        );
+        registry.newOrder(USDC_WETH_05_POOL, targetTick, wethAmount, false, id0);
     }
 
     function viewList(IUniswapV3Pool pool) public view returns (uint256[10] memory heads, uint256[10] memory tails) {
