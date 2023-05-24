@@ -545,7 +545,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             );
 
             // Add it to the list.
-            _addPositionToList(data, startingNode, targetTick, details.positionId);
+            _addPositionToList(data, startingNode, targetTick, details.positionId, direction);
 
             // Set new orders upper and lower tick.
             orderBook[details.positionId].tickLower = details.lower;
@@ -579,7 +579,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                 PoolData memory data = poolToData[pool];
 
                 // Add it to the list.
-                _addPositionToList(data, startingNode, targetTick, details.positionId);
+                _addPositionToList(data, startingNode, targetTick, details.positionId, direction);
 
                 // Setup BatchOrder, setting batchId, direction.
                 _setupOrder(direction, details.positionId);
@@ -844,12 +844,12 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
 
         // Continue walking the list towards head/tail until we find the next order that matches walk direction.
         // Then update center.
-        while (target != 0) {
-            // Note use storage here because memory makes the contract too large.
-            BatchOrder storage order = orderBook[target];
-            if (order.direction == walkDirection) break;
-            target = walkDirection ? order.head : order.tail;
-        }
+        // while (target != 0) {
+        //     // Note use storage here because memory makes the contract too large.
+        //     BatchOrder storage order = orderBook[target];
+        //     if (order.direction == walkDirection) break;
+        //     target = walkDirection ? order.head : order.tail;
+        // }
         if (walkDirection) {
             data.centerHead = target;
             // Need to reconnect list.
@@ -884,23 +884,25 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     function _findSpot(
         PoolData memory data,
         uint256 startingNode,
-        int24 targetTick
+        int24 targetTick,
+        bool direction
     ) internal view returns (uint256 proposedHead, uint256 proposedTail) {
         BatchOrder memory node;
         if (startingNode == 0) {
-            if (data.centerHead != 0) {
+            if (direction && data.centerHead != 0) {
                 startingNode = data.centerHead;
                 node = orderBook[startingNode];
-            } else if (data.centerTail != 0) {
+            } else if (!direction && data.centerTail != 0) {
                 startingNode = data.centerTail;
                 node = orderBook[startingNode];
             } else return (0, 0);
         } else {
             node = orderBook[startingNode];
+            if (node.direction != direction) revert LimitOrderRegistry__OrderNotInList(startingNode);
             _checkThatNodeIsInList(startingNode, node, data);
         }
         uint256 nodeId = startingNode;
-        bool direction = targetTick > node.tickUpper ? true : false;
+        // bool direction = targetTick > node.tickUpper ? true : false;
         while (true) {
             if (direction) {
                 // Go until we find an order with a tick lower GREATER or equal to targetTick, then set proposedTail equal to the tail, and proposed head to the current node.
@@ -975,9 +977,10 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         PoolData memory data,
         uint256 startingNode,
         int24 targetTick,
-        uint256 position
+        uint256 position,
+        bool direction
     ) internal {
-        (uint256 head, uint256 tail) = _findSpot(data, startingNode, targetTick);
+        (uint256 head, uint256 tail) = _findSpot(data, startingNode, targetTick, direction);
         if (tail != 0) {
             orderBook[tail].head = position;
             orderBook[position].tail = tail;
@@ -1308,6 +1311,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                             VIEW LOGIC
     //////////////////////////////////////////////////////////////*/
 
+    // TODO do I need to validate direction here?
     /**
      * @notice Helper function that finds the appropriate spot in the linked list for a new order.
      * @param pool the Uniswap V3 pool you want to create an order in
@@ -1320,7 +1324,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     function findSpot(
         UniswapV3Pool pool,
         uint256 startingNode,
-        int24 targetTick
+        int24 targetTick,
+        bool direction
     ) external view returns (uint256 proposedHead, uint256 proposedTail) {
         PoolData memory data = poolToData[pool];
 
@@ -1328,7 +1333,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         // Make sure targetTick is divisible by spacing.
         if (targetTick % tickSpacing != 0) revert LimitOrderRegistry__InvalidTargetTick(targetTick, tickSpacing);
 
-        (proposedHead, proposedTail) = _findSpot(data, startingNode, targetTick);
+        (proposedHead, proposedTail) = _findSpot(data, startingNode, targetTick, direction);
     }
 
     /**

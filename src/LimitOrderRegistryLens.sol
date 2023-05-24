@@ -85,9 +85,10 @@ contract LimitOrderRegistryLens {
     function findSpot(
         UniswapV3Pool pool,
         uint256 startingNode,
-        int24 targetTick
+        int24 targetTick,
+        bool direction
     ) external view returns (uint256 proposedHead, uint256 proposedTail) {
-        (proposedHead, proposedTail) = registry.findSpot(pool, startingNode, targetTick);
+        (proposedHead, proposedTail) = registry.findSpot(pool, startingNode, targetTick, direction);
     }
 
     /**
