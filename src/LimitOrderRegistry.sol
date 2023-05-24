@@ -1037,7 +1037,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         if (direction) data.token0.safeApprove(address(POSITION_MANAGER), amount0);
         else data.token1.safeApprove(address(POSITION_MANAGER), amount1);
 
-        // 0.9999e18 accounts for rounding errors in the Uniswap V3 protocol.
+        // 0.9999e4 accounts for rounding errors in the Uniswap V3 protocol.
         uint128 amount0Min = amount0 == 0 ? 0 : (amount0 * 0.9999e4) / 1e4;
         uint128 amount1Min = amount1 == 0 ? 0 : (amount1 * 0.9999e4) / 1e4;
 
@@ -1085,8 +1085,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         if (direction) data.token0.safeApprove(address(POSITION_MANAGER), amount0);
         else data.token1.safeApprove(address(POSITION_MANAGER), amount1);
 
-        uint128 amount0Min = amount0 == 0 ? 0 : (amount0 * 0.9999e18) / 1e18;
-        uint128 amount1Min = amount1 == 0 ? 0 : (amount1 * 0.9999e18) / 1e18;
+        uint128 amount0Min = amount0 == 0 ? 0 : (amount0 * 0.9999e4) / 1e4;
+        uint128 amount1Min = amount1 == 0 ? 0 : (amount1 * 0.9999e4) / 1e4;
 
         // Create increase liquidity params.
         NonFungiblePositionManager.IncreaseLiquidityParams memory params = NonFungiblePositionManager
