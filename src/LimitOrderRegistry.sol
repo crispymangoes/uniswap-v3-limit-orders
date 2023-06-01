@@ -13,6 +13,8 @@ import { IKeeperRegistrar, RegistrationParams } from "src/interfaces/chainlink/I
 import { Context } from "@openzeppelin/contracts/utils/Context.sol";
 import { IChainlinkAggregator } from "src/interfaces/chainlink/IChainlinkAggregator.sol";
 
+import { console } from "@forge-std/Test.sol";
+
 /**
  * @title Limit Order Registry
  * @notice Allows users to create decentralized limit orders.
@@ -719,7 +721,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                     // Update order tokenAmount.
                     order.token0Amount = 0;
                 } else {
-                    liquidityPercentToTake = (1e18 * depositAmount) / orderAmount;
+                    liquidityPercentToTake = (1e18 * uint256(depositAmount)) / orderAmount;
                     // Update order tokenAmount.
                     order.token0Amount = orderAmount - depositAmount;
                 }
@@ -730,7 +732,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                     // Update order tokenAmount.
                     order.token1Amount = 0;
                 } else {
-                    liquidityPercentToTake = (1e18 * depositAmount) / orderAmount;
+                    liquidityPercentToTake = (1e18 * uint256(depositAmount)) / orderAmount;
                     // Update order tokenAmount.
                     order.token1Amount = orderAmount - depositAmount;
                 }

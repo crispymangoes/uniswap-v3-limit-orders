@@ -68,16 +68,6 @@ contract LimitOrderRegistryTest is Test {
         registry.setupLimitOrder(USDC_WETH_05_POOL, 10e18);
     }
 
-    function test_OverflowingNewOrder() public {
-        uint96 amount = 340_316_398_560_794_542_918;
-        address msgSender = 0xE0b906ae06BfB1b54fad61E222b2E324D51e1da6;
-        deal(address(USDC), msgSender, amount);
-        vm.startPrank(msgSender);
-        USDC.approve(address(registry), amount);
-
-        registry.newOrder(USDC_WETH_05_POOL, 204900, amount, true, 0);
-    }
-
     // ========================================= INITIALIZATION TEST =========================================
 
     // ============================================= HAPPY PATH TEST =============================================
@@ -1679,6 +1669,67 @@ contract LimitOrderRegistryTest is Test {
         registry.newOrder(USDC_WETH_05_POOL, targetTick, wethAmount, false, id0);
     }
 
+    // Cyfrin M-1 M-3
+    function testOverflowingOrder() public {
+        uint96 amount = 10_000_000_000e18;
+        address msgSender = 0xE0b906ae06BfB1b54fad61E222b2E324D51e1da6;
+        deal(address(WETH), msgSender, amount);
+        vm.startPrank(msgSender);
+        WETH.approve(address(registry), amount);
+
+        // User can place large order.
+        registry.newOrder(USDC_WETH_05_POOL, 204800, amount, false, 0);
+        vm.stopPrank();
+
+        // Have smaller user place identical order, so that liquidity percent to take is not 100%.
+        address guppy = vm.addr(67);
+        amount = 1e18;
+        deal(address(WETH), guppy, amount);
+        vm.startPrank(guppy);
+        WETH.approve(address(registry), amount);
+
+        // User can place large order.
+        registry.newOrder(USDC_WETH_05_POOL, 204800, amount, false, 0);
+        vm.stopPrank();
+
+        // User can cancel large orders.
+        vm.prank(msgSender);
+        registry.cancelOrder(USDC_WETH_05_POOL, 204800, false);
+
+        // Now make sure large orders can be filled and claimed.
+        // Whale places an order in the opposite direction so that tokenOut has 18 decimals.
+        // Change amount to be a bit less extreme, so test can actually run.
+        amount = 10_000_000e6;
+        deal(address(USDC), msgSender, amount);
+        vm.startPrank(msgSender);
+        USDC.approve(address(registry), amount);
+
+        registry.newOrder(USDC_WETH_05_POOL, 204900, amount, true, 0);
+        vm.stopPrank();
+
+        // Make whale order ITM.
+        {
+            address[] memory path = new address[](2);
+            path[0] = address(WETH);
+            path[1] = address(USDC);
+            uint24[] memory poolFees = new uint24[](1);
+            poolFees[0] = 500;
+            uint256 swapAmount = 10_000e18;
+            deal(address(WETH), address(this), swapAmount);
+            _swap(path, poolFees, swapAmount);
+        }
+
+        // Fulfill the order.
+        (bool upkeepNeeded, bytes memory performData) = registry.checkUpkeep(abi.encode(USDC_WETH_05_POOL));
+        assertEq(upkeepNeeded, true, "Upkeep should be needed.");
+        registry.performUpkeep(performData);
+
+        // Have whale claim their order.
+        deal(msgSender, 1 ether);
+        vm.prank(msgSender);
+        registry.claimOrder{ value: 1 ether }(2, msgSender);
+    }
+
     // Cyfrin M-4
     function testCancellingITMOrderWrongly() external {
         uint96 usdcAmount = 1_000e6;
@@ -1687,7 +1738,6 @@ contract LimitOrderRegistryTest is Test {
         {
             (, int24 tick, , , , , ) = USDC_WETH_05_POOL.slot0();
             poolTick = tick - (tick % tickSpace);
-            console.log("Tick", uint24(tick));
         }
         // Create orders.
         _createOrder(address(this), USDC_WETH_05_POOL, 2 * tickSpace, USDC, usdcAmount);
@@ -1703,7 +1753,6 @@ contract LimitOrderRegistryTest is Test {
             _swap(path, poolFees, swapAmount);
         }
         (, int24 currentTick, , , , , ) = USDC_WETH_05_POOL.slot0();
-        console.log("Tick", uint24(currentTick));
         // Try to cancel it. But revert as it's ITM.
         vm.expectRevert(
             abi.encodeWithSelector(
