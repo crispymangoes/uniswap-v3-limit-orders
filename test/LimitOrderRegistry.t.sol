@@ -741,6 +741,10 @@ contract LimitOrderRegistryTest is Test {
     function testOrderCreationWrongDirection() external {
         (, int24 currentTick, , , , , ) = USDC_WETH_05_POOL.slot0();
 
+        // Give this contract enough tokens, and approval, so transferfrom is successful even if wrong direciton provided.
+        deal(address(WETH), address(this), type(uint256).max);
+        WETH.approve(address(registry), type(uint256).max);
+
         // Create orders to buy WETH.
         uint256 amount = 1_000e6;
         deal(address(USDC), address(this), amount);
@@ -749,6 +753,10 @@ contract LimitOrderRegistryTest is Test {
             abi.encodeWithSelector(LimitOrderRegistry.LimitOrderRegistry__OrderITM.selector, currentTick, 204910, false)
         );
         registry.newOrder(USDC_WETH_05_POOL, 204910, uint96(amount), false, 0);
+
+        // Give this contract enough tokens, and approval, so transferfrom is successful even if wrong direciton provided.
+        deal(address(USDC), address(this), type(uint256).max);
+        USDC.approve(address(registry), type(uint256).max);
 
         // Create orders to sell WETH.
         amount = 1e18;
@@ -1652,6 +1660,12 @@ contract LimitOrderRegistryTest is Test {
 
         // This however DOES work, but this order is ITM, so trying to create it with `newOrder` reverts.
         (uint256 head, ) = registry.findSpot(USDC_WETH_05_POOL, id1, targetTick, true);
+
+        deal(address(USDC), address(this), usdcAmount);
+        deal(address(WETH), address(this), wethAmount);
+
+        USDC.approve(address(registry), usdcAmount);
+        WETH.approve(address(registry), wethAmount);
 
         vm.expectRevert(
             bytes(
