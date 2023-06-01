@@ -27,6 +27,7 @@ import { console } from "@forge-std/Test.sol";
  */
 contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holder, Context {
     using SafeTransferLib for ERC20;
+    using SafeTransferLib for address;
 
     /*//////////////////////////////////////////////////////////////
                              STRUCTS
@@ -441,7 +442,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         // Make sure there is something to withdraw.
         if (wrappedNativeBalance == 0 && nativeBalance == 0) revert LimitOrderRegistry__ZeroNativeBalance();
         if (wrappedNativeBalance > 0) WRAPPED_NATIVE.safeTransfer(owner, wrappedNativeBalance);
-        if (nativeBalance > 0) payable(owner).transfer(nativeBalance);
+        if (nativeBalance > 0) owner.safeTransferETH(nativeBalance);
     }
 
     /**
@@ -641,11 +642,11 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         if (msg.value >= userClaim.feePerUser) {
             // refund if necessary.
             uint256 refund = msg.value - userClaim.feePerUser;
-            if (refund > 0) payable(sender).transfer(refund);
+            if (refund > 0) sender.safeTransferETH(refund);
         } else {
             WRAPPED_NATIVE.safeTransferFrom(sender, address(this), userClaim.feePerUser);
             // If value is non zero send it back to caller.
-            if (msg.value > 0) payable(sender).transfer(msg.value);
+            if (msg.value > 0) sender.safeTransferETH(msg.value);
         }
         emit ClaimOrder(user, batchId, owed);
         return (tokenOut, owed);
