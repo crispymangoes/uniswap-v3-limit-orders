@@ -440,8 +440,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         uint256 nativeBalance = address(this).balance;
         // Make sure there is something to withdraw.
         if (wrappedNativeBalance == 0 && nativeBalance == 0) revert LimitOrderRegistry__ZeroNativeBalance();
-        WRAPPED_NATIVE.safeTransfer(owner, WRAPPED_NATIVE.balanceOf(address(this)));
-        payable(owner).transfer(address(this).balance);
+        if (wrappedNativeBalance > 0) WRAPPED_NATIVE.safeTransfer(owner, wrappedNativeBalance);
+        if (nativeBalance > 0) payable(owner).transfer(nativeBalance);
     }
 
     /**
