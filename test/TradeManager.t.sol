@@ -118,7 +118,7 @@ contract TradeManagerTest is Test {
 
         // Create a new order, then cancel it.
         _createOrder(manager, address(this), USDC_WETH_05_POOL, 300, USDC, usdcAmount);
-        manager.cancelOrder(USDC_WETH_05_POOL, 205240 + 300, true);
+        manager.cancelOrder(USDC_WETH_05_POOL, 205240 + 300, true, block.timestamp);
 
         // Swap again so that second order is ITM.
         {
@@ -339,7 +339,7 @@ contract TradeManagerTest is Test {
         deal(address(assetIn), sender, amount);
         assetIn.approve(address(manager), amount);
         bool direction = tickDelta > 0;
-        manager.newOrder(pool, assetIn, targetTick, amount, direction, 0);
+        manager.newOrder(pool, assetIn, targetTick, amount, direction, 0, block.timestamp);
 
         return targetTick;
     }
