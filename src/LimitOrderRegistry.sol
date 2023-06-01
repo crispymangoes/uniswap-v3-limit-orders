@@ -133,7 +133,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     /**
      * @notice Maps tick ranges to LP positions owned by this contract.
      */
-    mapping(UniswapV3Pool => mapping(int24 => mapping(int24 => uint256))) public getPositionFromTicks; // maps pool -> lower -> upper -> positionId
+    mapping(UniswapV3Pool => mapping(bool => mapping(int24 => mapping(int24 => uint256)))) public getPositionFromTicks; // maps pool -> lower -> upper -> positionId
 
     /**
      * @notice The minimum amount of assets required to create a `newOrder`.
@@ -528,7 +528,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         }
 
         // Get the position id.
-        details.positionId = getPositionFromTicks[pool][details.lower][details.upper];
+        details.positionId = getPositionFromTicks[pool][direction][details.lower][details.upper];
 
         if (direction) details.amount0 = amount;
         else details.amount1 = amount;
@@ -561,7 +561,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             _updateCenter(pool, details.positionId, details.tick, details.upper, details.lower);
 
             // Update getPositionFromTicks since we have a new LP position.
-            getPositionFromTicks[pool][details.lower][details.upper] = details.positionId;
+            getPositionFromTicks[pool][direction][details.lower][details.upper] = details.positionId;
         } else {
             // Check if the position id is already being used in List.
             BatchOrder memory order = orderBook[details.positionId];
@@ -689,7 +689,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             }
 
             // Get the position id.
-            positionId = getPositionFromTicks[pool][lower][upper];
+            positionId = getPositionFromTicks[pool][direction][lower][upper];
 
             if (positionId == 0) revert LimitOrderRegistry__InvalidPositionId();
         }

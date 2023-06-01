@@ -1033,7 +1033,6 @@ contract LimitOrderRegistryTest is Test {
 
         // Check that BatchOrder is correct
         // Have User A, and B claim their orders
-        // Price moves tick up, then reuse original order but for an order with opposite direction.
         uint96 usdcAmount = 1_000e6;
         uint96 wethAmount = 1e18;
         bool upkeepNeeded;
@@ -1165,7 +1164,7 @@ contract LimitOrderRegistryTest is Test {
         _createOrder(userE, USDC_WETH_05_POOL, -30, WETH, wethAmount);
 
         {
-            (bool direction, , , uint64 userCount, uint128 batchId, , , , ) = registry.orderBook(id0);
+            (bool direction, , , uint64 userCount, uint128 batchId, , , , ) = registry.orderBook(id1);
             assertEq(direction, false, "Direction should be false.");
             assertEq(userCount, 1, "There should be 1 users in the order.");
             assertEq(batchId, 4, "Batch Id should be 3.");
@@ -1223,7 +1222,9 @@ contract LimitOrderRegistryTest is Test {
         expectedBalance = 1264643473;
         assertEq(USDC.balanceOf(userE), expectedBalance, "User E USDC balance should equal expected.");
 
-        assertEq(positionManger.balanceOf(address(registry)), 1, "Limit Order Registry should only have 1 position.");
+        // Limit Order Registry has 2 positions since the first one was reused for all the orders in 1 direction,
+        // but the second one was used for an order in the opposite direction.
+        assertEq(positionManger.balanceOf(address(registry)), 2, "Limit Order Registry should have 2 positions.");
 
         deal(address(USDC), address(this), 0);
         deal(address(WETH), address(this), 0);
@@ -1269,9 +1270,22 @@ contract LimitOrderRegistryTest is Test {
 
         vm.startPrank(attacker);
         WETH.approve(address(registry), usdcAmount);
-        vm.expectRevert(abi.encodeWithSelector(LimitOrderRegistry.LimitOrderRegistry__DirectionMisMatch.selector));
         registry.newOrder(USDC_WETH_05_POOL, targetTick - 10, usdcAmount, false, 0);
         vm.stopPrank();
+
+        // Call works, but attacker placed order in opposite direction, so a separate orderbook is used.
+        uint256 userLPPosition = registry.getPositionFromTicks(USDC_WETH_05_POOL, true, targetTick - 10, targetTick);
+        uint256 attackerLPPosition = registry.getPositionFromTicks(
+            USDC_WETH_05_POOL,
+            false,
+            targetTick - 10,
+            targetTick
+        );
+
+        assertTrue(
+            userLPPosition != attackerLPPosition,
+            "User order and attacker order should be in different LP positions."
+        );
     }
 
     function testAttackerTanglingListTowardsHeadPriceStaysTheSame() external {
@@ -1663,6 +1677,67 @@ contract LimitOrderRegistryTest is Test {
             bytes(abi.encodeWithSelector(LimitOrderRegistry.LimitOrderRegistry__OrderNotInList.selector, id0))
         );
         registry.newOrder(USDC_WETH_05_POOL, targetTick, wethAmount, false, id0);
+    }
+
+    // Cyfrin M-4
+    function testCancellingITMOrderWrongly() external {
+        uint96 usdcAmount = 1_000e6;
+        int24 poolTick;
+        int24 tickSpace = USDC_WETH_05_POOL.tickSpacing();
+        {
+            (, int24 tick, , , , , ) = USDC_WETH_05_POOL.slot0();
+            poolTick = tick - (tick % tickSpace);
+            console.log("Tick", uint24(tick));
+        }
+        // Create orders.
+        _createOrder(address(this), USDC_WETH_05_POOL, 2 * tickSpace, USDC, usdcAmount);
+        // Make first order ITM.
+        {
+            address[] memory path = new address[](2);
+            path[0] = address(WETH);
+            path[1] = address(USDC);
+            uint24[] memory poolFees = new uint24[](1);
+            poolFees[0] = 500;
+            uint256 swapAmount = 770e18;
+            deal(address(WETH), address(this), swapAmount);
+            _swap(path, poolFees, swapAmount);
+        }
+        (, int24 currentTick, , , , , ) = USDC_WETH_05_POOL.slot0();
+        console.log("Tick", uint24(currentTick));
+        // Try to cancel it. But revert as it's ITM.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LimitOrderRegistry.LimitOrderRegistry__OrderITM.selector,
+                currentTick,
+                poolTick + 20,
+                true
+            )
+        );
+        registry.cancelOrder(USDC_WETH_05_POOL, poolTick + 2 * tickSpace, true);
+        // Cancel with opposite direction, separated by one tick space
+        // Fails because position does not exist.
+        vm.expectRevert(
+            bytes(abi.encodeWithSelector(LimitOrderRegistry.LimitOrderRegistry__InvalidPositionId.selector))
+        );
+        registry.cancelOrder(USDC_WETH_05_POOL, poolTick + tickSpace, false);
+
+        // New user places an order so that the position is valid.
+        address otherUser = vm.addr(1234);
+        uint96 wethAmount = 1e18;
+        _createOrder(otherUser, USDC_WETH_05_POOL, -290, WETH, wethAmount);
+
+        // Old user again tries to cancel their order, using the opposite direction OTM order.
+        // But it fails because it is a completely separate order.
+        vm.expectRevert(
+            bytes(
+                abi.encodeWithSelector(LimitOrderRegistry.LimitOrderRegistry__UserNotFound.selector, address(this), 2)
+            )
+        );
+        registry.cancelOrder(USDC_WETH_05_POOL, poolTick + tickSpace, false);
+
+        // But other user can still cancel their order.
+        vm.prank(otherUser);
+        registry.cancelOrder(USDC_WETH_05_POOL, poolTick + tickSpace, false);
     }
 
     function viewList(IUniswapV3Pool pool) public view returns (uint256[10] memory heads, uint256[10] memory tails) {
