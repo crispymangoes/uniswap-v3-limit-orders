@@ -54,5 +54,6 @@ npm run forkTest
 ```
 
 **Deployment**
-Once all libraries are added, and your env is updated, navigate to the `script` folder and choose the script you want to deploy.
+
+Once all libraries are added, and your `.env` is updated, navigate to the `script` folder and choose the script you want to deploy.
 At the top of the script you will see the command you need to run.
