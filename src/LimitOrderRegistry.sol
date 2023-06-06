@@ -135,8 +135,9 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
 
     /**
      * @notice Maps tick ranges to LP positions owned by this contract.
+     * @dev  maps pool -> direction -> lower -> upper -> positionId
      */
-    mapping(UniswapV3Pool => mapping(bool => mapping(int24 => mapping(int24 => uint256)))) public getPositionFromTicks; // maps pool -> lower -> upper -> positionId
+    mapping(UniswapV3Pool => mapping(bool => mapping(int24 => mapping(int24 => uint256)))) public getPositionFromTicks;
 
     /**
      * @notice The minimum amount of assets required to create a `newOrder`.
