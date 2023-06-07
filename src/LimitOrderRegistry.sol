@@ -25,6 +25,7 @@ import { IChainlinkAggregator } from "src/interfaces/chainlink/IChainlinkAggrega
  */
 contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holder, Context {
     using SafeTransferLib for ERC20;
+    using SafeTransferLib for address;
 
     /*//////////////////////////////////////////////////////////////
                              STRUCTS
@@ -132,8 +133,9 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
 
     /**
      * @notice Maps tick ranges to LP positions owned by this contract.
+     * @dev  maps pool -> direction -> lower -> upper -> positionId
      */
-    mapping(UniswapV3Pool => mapping(int24 => mapping(int24 => uint256))) public getPositionFromTicks; // maps pool -> lower -> upper -> positionId
+    mapping(UniswapV3Pool => mapping(bool => mapping(int24 => mapping(int24 => uint256)))) public getPositionFromTicks;
 
     /**
      * @notice The minimum amount of assets required to create a `newOrder`.
@@ -173,14 +175,14 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     /**
      * @notice The `orderBook` maps Uniswap V3 token ids to BatchOrder information.
      * @dev Each BatchOrder contains a head and tail value which effectively,
-     *      which means BatchOrders are connected using a doubley linked list.
+     *      which means BatchOrders are connected using a doubly linked list.
      */
     mapping(uint256 => BatchOrder) public orderBook;
 
     /**
      * @notice Chainlink Automation Registrar contract.
      */
-    IKeeperRegistrar public registrar; // Mainnet 0xDb8e8e2ccb5C033938736aa89Fe4fa1eDfD15a1d
+    IKeeperRegistrar public registrar;
 
     /**
      * @notice Whether or not the contract is shutdown in case of an emergency.
@@ -188,9 +190,10 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     bool public isShutdown;
 
     /**
-     * @notice Chainlink Fast Gas Feed for ETH Mainnet.
+     * @notice Chainlink Fast Gas Feed.
+     * @dev Feed for ETH Mainnet 0x169E633A2D1E6c10dD91238Ba11c4A708dfEF37C.
      */
-    address public fastGasFeed = 0x169E633A2D1E6c10dD91238Ba11c4A708dfEF37C;
+    address public fastGasFeed;
 
     /**
      * @notice The max possible gas the owner can set for the gas limit.
@@ -237,9 +240,9 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                                  EVENTS
     //////////////////////////////////////////////////////////////*/
 
-    event NewOrder(address user, address pool, uint128 amount, uint128 userTotal, BatchOrder effectedOrder);
+    event NewOrder(address user, address pool, uint128 amount, uint128 userTotal, BatchOrder affectedOrder);
     event ClaimOrder(address user, uint128 batchId, uint256 amount);
-    event CancelOrder(address user, uint128 amount0, uint128 amount1, BatchOrder effectedOrder);
+    event CancelOrder(address user, uint128 amount0, uint128 amount1, BatchOrder affectedOrder);
     event OrderFilled(uint256 batchId, address pool);
     event ShutdownChanged(bool isShutdown);
     event LimitOrderSetup(address pool);
@@ -438,12 +441,12 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         uint256 nativeBalance = address(this).balance;
         // Make sure there is something to withdraw.
         if (wrappedNativeBalance == 0 && nativeBalance == 0) revert LimitOrderRegistry__ZeroNativeBalance();
-        WRAPPED_NATIVE.safeTransfer(owner, WRAPPED_NATIVE.balanceOf(address(this)));
-        payable(owner).transfer(address(this).balance);
+        if (wrappedNativeBalance > 0) WRAPPED_NATIVE.safeTransfer(owner, wrappedNativeBalance);
+        if (nativeBalance > 0) owner.safeTransferETH(nativeBalance);
     }
 
     /**
-     * @notice Shutdown the cellar. Used in an emergency or if the cellar has been deprecated.
+     * @notice Shutdown the registry. Used in an emergency or if the registry has been deprecated.
      */
     function initiateShutdown() external whenNotShutdown onlyOwner {
         isShutdown = true;
@@ -452,7 +455,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     }
 
     /**
-     * @notice Restart the cellar.
+     * @notice Restart the registry.
      */
     function liftShutdown() external onlyOwner {
         if (!isShutdown) revert LimitOrderRegistry__ContractNotShutdown();
@@ -479,7 +482,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
      * @dev reverts if
      *      - pool is not setup
      *      - targetTick is not divisible by the pools tick spacing
-     *      - the new order would be ITM
+     *      - the new order would be ITM, or in a MIXED state
      *      - the new order does not meet minimum liquidity requirements
      *      - transferFrom fails
 
@@ -490,12 +493,21 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         int24 targetTick,
         uint128 amount,
         bool direction,
-        uint256 startingNode
+        uint256 startingNode,
+        uint256 deadline
     ) external whenNotShutdown returns (uint128) {
         if (address(poolToData[pool].token0) == address(0)) revert LimitOrderRegistry__PoolNotSetup(address(pool));
 
-        OrderDetails memory details;
         address sender = _msgSender();
+
+        // Transfer assets into contract before setting/checking any state.
+        {
+            ERC20 assetIn = direction ? poolToData[pool].token0 : poolToData[pool].token1;
+            _enforceMinimumLiquidity(amount, assetIn);
+            assetIn.safeTransferFrom(sender, address(this), amount);
+        }
+
+        OrderDetails memory details;
 
         (, details.tick, , , , , ) = pool.slot0();
 
@@ -518,17 +530,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             if (status != OrderStatus.OTM) revert LimitOrderRegistry__OrderITM(details.tick, targetTick, direction);
         }
 
-        // Transfer assets into contract before setting any state.
-        {
-            ERC20 assetIn;
-            if (direction) assetIn = poolToData[pool].token0;
-            else assetIn = poolToData[pool].token1;
-            _enforceMinimumLiquidity(amount, assetIn);
-            assetIn.safeTransferFrom(sender, address(this), amount);
-        }
-
         // Get the position id.
-        details.positionId = getPositionFromTicks[pool][details.lower][details.upper];
+        details.positionId = getPositionFromTicks[pool][direction][details.lower][details.upper];
 
         if (direction) details.amount0 = amount;
         else details.amount1 = amount;
@@ -541,11 +544,12 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                 details.lower,
                 details.amount0,
                 details.amount1,
-                direction
+                direction,
+                deadline
             );
 
             // Add it to the list.
-            _addPositionToList(data, startingNode, targetTick, details.positionId);
+            _addPositionToList(data, startingNode, targetTick, details.positionId, direction);
 
             // Set new orders upper and lower tick.
             orderBook[details.positionId].tickLower = details.lower;
@@ -561,7 +565,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             _updateCenter(pool, details.positionId, details.tick, details.upper, details.lower);
 
             // Update getPositionFromTicks since we have a new LP position.
-            getPositionFromTicks[pool][details.lower][details.upper] = details.positionId;
+            getPositionFromTicks[pool][direction][details.lower][details.upper] = details.positionId;
         } else {
             // Check if the position id is already being used in List.
             BatchOrder memory order = orderBook[details.positionId];
@@ -570,7 +574,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                 if (direction != order.direction) revert LimitOrderRegistry__DirectionMisMatch();
                 // Need to add liquidity.
                 PoolData memory data = poolToData[pool];
-                _addToPosition(data, details.positionId, details.amount0, details.amount1, direction);
+                _addToPosition(data, details.positionId, details.amount0, details.amount1, direction, deadline);
 
                 // Update token0Amount, token1Amount, batchIdToUserDepositAmount mapping.
                 details.userTotal = _updateOrder(details.positionId, sender, amount);
@@ -579,13 +583,13 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                 PoolData memory data = poolToData[pool];
 
                 // Add it to the list.
-                _addPositionToList(data, startingNode, targetTick, details.positionId);
+                _addPositionToList(data, startingNode, targetTick, details.positionId, direction);
 
                 // Setup BatchOrder, setting batchId, direction.
                 _setupOrder(direction, details.positionId);
 
                 // Need to add liquidity.
-                _addToPosition(data, details.positionId, details.amount0, details.amount1, direction);
+                _addToPosition(data, details.positionId, details.amount0, details.amount1, direction, deadline);
 
                 // Update token0Amount, token1Amount, batchIdToUserDepositAmount mapping.
                 details.userTotal = _updateOrder(details.positionId, sender, amount);
@@ -594,9 +598,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                 _updateCenter(pool, details.positionId, details.tick, details.upper, details.lower);
             }
         }
-        uint128 batchId = orderBook[details.positionId].batchId;
         emit NewOrder(sender, address(pool), amount, details.userTotal, orderBook[details.positionId]);
-        return batchId;
+        return orderBook[details.positionId].batchId;
     }
 
     /**
@@ -639,11 +642,11 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         if (msg.value >= userClaim.feePerUser) {
             // refund if necessary.
             uint256 refund = msg.value - userClaim.feePerUser;
-            if (refund > 0) payable(sender).transfer(refund);
+            if (refund > 0) sender.safeTransferETH(refund);
         } else {
             WRAPPED_NATIVE.safeTransferFrom(sender, address(this), userClaim.feePerUser);
             // If value is non zero send it back to caller.
-            if (msg.value > 0) payable(sender).transfer(msg.value);
+            if (msg.value > 0) sender.safeTransferETH(msg.value);
         }
         emit ClaimOrder(user, batchId, owed);
         return (tokenOut, owed);
@@ -654,12 +657,12 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
      * @param pool the Uniswap V3 pool that contains the limit order to cancel
      * @param targetTick the targetTick of the order you want to cancel
      * @param direction bool indication the direction of the order
-     * @dev This logic will send ALL the swap fees from a position to the last person that cancels the order.
      */
     function cancelOrder(
         UniswapV3Pool pool,
         int24 targetTick,
-        bool direction
+        bool direction,
+        uint256 deadline
     ) external returns (uint128 amount0, uint128 amount1, uint128 batchId) {
         uint256 positionId;
         {
@@ -689,7 +692,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             }
 
             // Get the position id.
-            positionId = getPositionFromTicks[pool][lower][upper];
+            positionId = getPositionFromTicks[pool][direction][lower][upper];
 
             if (positionId == 0) revert LimitOrderRegistry__InvalidPositionId();
         }
@@ -719,7 +722,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                     // Update order tokenAmount.
                     order.token0Amount = 0;
                 } else {
-                    liquidityPercentToTake = (1e18 * depositAmount) / orderAmount;
+                    liquidityPercentToTake = (1e18 * uint256(depositAmount)) / orderAmount;
                     // Update order tokenAmount.
                     order.token0Amount = orderAmount - depositAmount;
                 }
@@ -730,13 +733,13 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                     // Update order tokenAmount.
                     order.token1Amount = 0;
                 } else {
-                    liquidityPercentToTake = (1e18 * depositAmount) / orderAmount;
+                    liquidityPercentToTake = (1e18 * uint256(depositAmount)) / orderAmount;
                     // Update order tokenAmount.
                     order.token1Amount = orderAmount - depositAmount;
                 }
             }
 
-            (amount0, amount1) = _takeFromPosition(positionId, pool, liquidityPercentToTake);
+            (amount0, amount1) = _takeFromPosition(positionId, pool, liquidityPercentToTake, deadline);
             emit CancelOrder(sender, amount0, amount1, order);
             if (liquidityPercentToTake == 1e18) {
                 _removeOrderFromList(positionId, pool, order);
@@ -771,6 +774,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         BatchOrder memory order;
         OrderStatus status;
         bool walkDirection;
+        uint256 deadline = block.timestamp + 900;
 
         if (data.centerHead != 0) {
             // centerHead is set, check if it is ITM.
@@ -779,7 +783,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             if (status == OrderStatus.ITM) {
                 walkDirection = true; // Walk towards head of list.
                 upkeepNeeded = true;
-                performData = abi.encode(pool, walkDirection);
+                performData = abi.encode(pool, walkDirection, deadline);
                 return (upkeepNeeded, performData);
             }
         }
@@ -791,7 +795,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             if (status == OrderStatus.ITM) {
                 walkDirection = false; // Walk towards tail of list.
                 upkeepNeeded = true;
-                performData = abi.encode(pool, walkDirection);
+                performData = abi.encode(pool, walkDirection, deadline);
                 return (upkeepNeeded, performData);
             }
         }
@@ -804,7 +808,10 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
      *      value is not updated every single time and order is fulfilled, instead we just update it once at the end.
      */
     function performUpkeep(bytes calldata performData) external {
-        (UniswapV3Pool pool, bool walkDirection) = abi.decode(performData, (UniswapV3Pool, bool));
+        (UniswapV3Pool pool, bool walkDirection, uint256 deadline) = abi.decode(
+            performData,
+            (UniswapV3Pool, bool, uint256)
+        );
 
         if (address(poolToData[pool].token0) == address(0)) revert LimitOrderRegistry__PoolNotSetup(address(pool));
 
@@ -823,7 +830,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             BatchOrder storage order = orderBook[target];
             OrderStatus status = _getOrderStatus(currentTick, order.tickLower, order.tickUpper, order.direction);
             if (status == OrderStatus.ITM) {
-                _fulfillOrder(target, pool, order, estimatedFee);
+                _fulfillOrder(target, pool, order, estimatedFee, deadline);
                 target = walkDirection ? order.head : order.tail;
                 // Reconnect List and Zero out orders head and tail values removing order from the list.
                 orderBook[order.tail].head = order.head;
@@ -842,24 +849,11 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
 
         if (!orderFilled) revert LimitOrderRegistry__NoOrdersToFulfill();
 
-        // Continue walking the list towards head/tail until we find the next order that matches walk direction.
-        // Then update center.
-        while (target != 0) {
-            // Note use storage here because memory makes the contract too large.
-            BatchOrder storage order = orderBook[target];
-            if (order.direction == walkDirection) break;
-            target = walkDirection ? order.head : order.tail;
-        }
+        // Update appropriate center value.
         if (walkDirection) {
             data.centerHead = target;
-            // Need to reconnect list.
-            orderBook[data.centerTail].head = target;
-            if (target != 0) orderBook[target].tail = data.centerTail;
         } else {
             data.centerTail = target;
-            // Need to reconnect list.
-            orderBook[data.centerHead].tail = target;
-            if (target != 0) orderBook[target].head = data.centerHead;
         }
     }
 
@@ -884,23 +878,25 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     function _findSpot(
         PoolData memory data,
         uint256 startingNode,
-        int24 targetTick
+        int24 targetTick,
+        bool direction
     ) internal view returns (uint256 proposedHead, uint256 proposedTail) {
         BatchOrder memory node;
         if (startingNode == 0) {
-            if (data.centerHead != 0) {
+            if (direction && data.centerHead != 0) {
                 startingNode = data.centerHead;
                 node = orderBook[startingNode];
-            } else if (data.centerTail != 0) {
+            } else if (!direction && data.centerTail != 0) {
                 startingNode = data.centerTail;
                 node = orderBook[startingNode];
             } else return (0, 0);
         } else {
             node = orderBook[startingNode];
+            if (node.direction != direction) revert LimitOrderRegistry__OrderNotInList(startingNode);
             _checkThatNodeIsInList(startingNode, node, data);
         }
         uint256 nodeId = startingNode;
-        bool direction = targetTick > node.tickUpper ? true : false;
+
         while (true) {
             if (direction) {
                 // Go until we find an order with a tick lower GREATER or equal to targetTick, then set proposedTail equal to the tail, and proposed head to the current node.
@@ -975,9 +971,10 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         PoolData memory data,
         uint256 startingNode,
         int24 targetTick,
-        uint256 position
+        uint256 position,
+        bool direction
     ) internal {
-        (uint256 head, uint256 tail) = _findSpot(data, startingNode, targetTick);
+        (uint256 head, uint256 tail) = _findSpot(data, startingNode, targetTick, direction);
         if (tail != 0) {
             orderBook[tail].head = position;
             orderBook[position].tail = tail;
@@ -994,9 +991,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
      */
     function _setupOrder(bool direction, uint256 position) internal {
         BatchOrder storage order = orderBook[position];
-        order.batchId = batchCount;
+        order.batchId = batchCount++;
         order.direction = direction;
-        batchCount++;
     }
 
     /**
@@ -1032,7 +1028,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         int24 lower,
         uint128 amount0,
         uint128 amount1,
-        bool direction
+        bool direction,
+        uint256 deadline
     ) internal returns (uint256) {
         if (direction) data.token0.safeApprove(address(POSITION_MANAGER), amount0);
         else data.token1.safeApprove(address(POSITION_MANAGER), amount1);
@@ -1053,7 +1050,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
             amount0Min: amount0Min,
             amount1Min: amount1Min,
             recipient: address(this),
-            deadline: block.timestamp
+            deadline: deadline
         });
 
         // Supply liquidity to pool.
@@ -1080,7 +1077,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         uint256 positionId,
         uint128 amount0,
         uint128 amount1,
-        bool direction
+        bool direction,
+        uint256 deadline
     ) internal {
         if (direction) data.token0.safeApprove(address(POSITION_MANAGER), amount0);
         else data.token1.safeApprove(address(POSITION_MANAGER), amount1);
@@ -1096,7 +1094,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                 amount1Desired: amount1,
                 amount0Min: amount0Min,
                 amount1Min: amount1Min,
-                deadline: block.timestamp
+                deadline: deadline
             });
 
         // Increase liquidity in pool.
@@ -1153,7 +1151,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         uint256 target,
         UniswapV3Pool pool,
         BatchOrder storage order,
-        uint256 estimatedFee
+        uint256 estimatedFee,
+        uint256 deadline
     ) internal {
         // Save fee per user in Claim Struct.
         uint256 totalUsers = order.userCount;
@@ -1164,7 +1163,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         // Take all liquidity from the order.
         uint128 amount0;
         uint128 amount1;
-        (amount0, amount1) = _takeFromPosition(target, pool, 1e18);
+        (amount0, amount1) = _takeFromPosition(target, pool, 1e18, deadline);
         if (order.direction) {
             // Copy the tokenIn amount from the order, this is the total user deposit.
             newClaim.token0Amount = order.token0Amount;
@@ -1192,7 +1191,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     function _takeFromPosition(
         uint256 target,
         UniswapV3Pool pool,
-        uint256 liquidityPercent
+        uint256 liquidityPercent,
+        uint256 deadline
     ) internal returns (uint128, uint128) {
         (, , , , , , , uint128 liquidity, , , , ) = POSITION_MANAGER.positions(target);
         liquidity = uint128(uint256(liquidity * liquidityPercent) / 1e18);
@@ -1204,7 +1204,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
                 liquidity: liquidity,
                 amount0Min: 0,
                 amount1Min: 0,
-                deadline: block.timestamp
+                deadline: deadline
             });
 
         // Decrease liquidity in pool.
@@ -1281,6 +1281,10 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         order.tail = 0;
     }
 
+    /*//////////////////////////////////////////////////////////////
+                            VIEW LOGIC
+    //////////////////////////////////////////////////////////////*/
+
     /**
      * @notice Helper function to get the gas price used for fee calculation.
      */
@@ -1304,15 +1308,12 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         return uint256(upkeepGasPrice) * 1e9; // Multiply by 1e9 to convert gas price to gwei
     }
 
-    /*//////////////////////////////////////////////////////////////
-                            VIEW LOGIC
-    //////////////////////////////////////////////////////////////*/
-
     /**
      * @notice Helper function that finds the appropriate spot in the linked list for a new order.
      * @param pool the Uniswap V3 pool you want to create an order in
      * @param startingNode the UniV3 position Id to start looking
      * @param targetTick the targetTick of the order you want to place
+     * @param direction the direction of the order
      * @return proposedHead , proposedTail pr the correct head and tail for the new order
      * @dev if both head and tail are zero, just pass in zero for the `startingNode`
      *      otherwise pass in either the nonzero head or nonzero tail for the `startingNode`
@@ -1320,7 +1321,8 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     function findSpot(
         UniswapV3Pool pool,
         uint256 startingNode,
-        int24 targetTick
+        int24 targetTick,
+        bool direction
     ) external view returns (uint256 proposedHead, uint256 proposedTail) {
         PoolData memory data = poolToData[pool];
 
@@ -1328,7 +1330,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
         // Make sure targetTick is divisible by spacing.
         if (targetTick % tickSpacing != 0) revert LimitOrderRegistry__InvalidTargetTick(targetTick, tickSpacing);
 
-        (proposedHead, proposedTail) = _findSpot(data, startingNode, targetTick);
+        (proposedHead, proposedTail) = _findSpot(data, startingNode, targetTick, direction);
     }
 
     /**

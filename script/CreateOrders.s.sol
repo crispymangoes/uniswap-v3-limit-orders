@@ -91,7 +91,7 @@ contract CreateOrdersScript is Script {
         targetTick += tickDelta;
 
         bool direction = tickDelta > 0;
-        manager.newOrder(pool, assetIn, targetTick, amount, direction, 0);
+        manager.newOrder(pool, assetIn, targetTick, amount, direction, 0, block.timestamp + 300);
 
         return targetTick;
     }

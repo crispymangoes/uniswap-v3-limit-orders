@@ -160,25 +160,27 @@ contract TradeManager is Initializable, AutomationCompatibleInterface, Owned {
         int24 targetTick,
         uint128 amount,
         bool direction,
-        uint256 startingNode
+        uint256 startingNode,
+        uint256 deadline
     ) external onlyOwner {
         uint256 managerBalance = assetIn.balanceOf(address(this));
         // If manager lacks funds, transfer delta into manager.
         if (managerBalance < amount) assetIn.safeTransferFrom(msg.sender, address(this), amount - managerBalance);
 
         assetIn.safeApprove(address(limitOrderRegistry), amount);
-        uint128 batchId = limitOrderRegistry.newOrder(pool, targetTick, amount, direction, startingNode);
+        uint128 batchId = limitOrderRegistry.newOrder(pool, targetTick, amount, direction, startingNode, deadline);
         ownerOrders.add(batchId);
     }
 
     /**
      * @notice See `LimitOrderRegistry.sol:cancelOrder`.
      */
-    function cancelOrder(UniswapV3Pool pool, int24 targetTick, bool direction) external onlyOwner {
+    function cancelOrder(UniswapV3Pool pool, int24 targetTick, bool direction, uint256 deadline) external onlyOwner {
         (uint128 amount0, uint128 amount1, uint128 batchId) = limitOrderRegistry.cancelOrder(
             pool,
             targetTick,
-            direction
+            direction,
+            deadline
         );
         if (amount0 > 0) ERC20(pool.token0()).safeTransfer(owner, amount0);
         if (amount1 > 0) ERC20(pool.token1()).safeTransfer(owner, amount1);
