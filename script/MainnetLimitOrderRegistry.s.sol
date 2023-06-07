@@ -15,7 +15,7 @@ import "forge-std/Script.sol";
 
 /**
  * @dev Run
- *      `source .env && forge script script/MainnetLimitOrderRegistry.s.sol:MainnetLimitOrderRegistryScript --rpc-url $MAINNET_RPC_URL  --private-key $PRIVATE_KEY —optimize —optimizer-runs 200 --with-gas-price 15000000000 --verify --etherscan-api-key $ETHERSCAN_KEY --broadcast --slow`
+ *      `source .env && forge script script/MainnetLimitOrderRegistry.s.sol:MainnetLimitOrderRegistryScript --rpc-url $MAINNET_RPC_URL  --private-key $DEPLOYER_KEY —optimize —optimizer-runs 200 --with-gas-price 15000000000 --verify --etherscan-api-key $ETHERSCAN_KEY --broadcast --slow`
  * @dev Optionally can change `--with-gas-price` to something more reasonable
  */
 contract MainnetLimitOrderRegistryScript is Script {

@@ -15,7 +15,7 @@ import "forge-std/Script.sol";
 
 /**
  * @dev Run
- *      `source .env && forge script script/OptimismLimitOrderRegistry.s.sol:OptimismLimitOrderRegistryScript --rpc-url $OPTIMISM_RPC_URL  --private-key $PRIVATE_KEY —optimize —optimizer-runs 200 --with-gas-price 300000000000 --verify --etherscan-api-key $OPTIMISTIC_ETHERSCAN_KEY --broadcast --slow`
+ *      `source .env && forge script script/OptimismLimitOrderRegistry.s.sol:OptimismLimitOrderRegistryScript --rpc-url $OPTIMISM_RPC_URL  --private-key $DEPLOYER_KEY —optimize —optimizer-runs 200 --verify --etherscan-api-key $OPTIMISTIC_ETHERSCAN_KEY --broadcast --slow`
  * @dev Optionally can change `--with-gas-price` to something more reasonable
  */
 contract OptimismLimitOrderRegistryScript is Script {
@@ -38,17 +38,17 @@ contract OptimismLimitOrderRegistryScript is Script {
 
         // Deploy limit order registry.
         registry = new LimitOrderRegistry(owner, positionManger, WrappedNative, LINK, REGISTRAR, address(0));
-        lens = new LimitOrderRegistryLens(registry);
-        TradeManager implementation = new TradeManager();
-        // Initialize implementation.
-        implementation.initialize(
-            address(0),
-            LimitOrderRegistry(address(0)),
-            LinkTokenInterface(address(0)),
-            KeeperRegistrar(address(0)),
-            0
-        );
-        factory = new TradeManagerFactory(address(implementation));
+        // lens = new LimitOrderRegistryLens(registry);
+        // TradeManager implementation = new TradeManager();
+        // // Initialize implementation.
+        // implementation.initialize(
+        //     address(0),
+        //     LimitOrderRegistry(address(0)),
+        //     LinkTokenInterface(address(0)),
+        //     KeeperRegistrar(address(0)),
+        //     0
+        // );
+        // factory = new TradeManagerFactory(address(implementation));
 
         vm.stopBroadcast();
     }
