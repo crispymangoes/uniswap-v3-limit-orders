@@ -13,8 +13,6 @@ import { IKeeperRegistrar, RegistrationParams } from "src/interfaces/chainlink/I
 import { Context } from "@openzeppelin/contracts/utils/Context.sol";
 import { IChainlinkAggregator } from "src/interfaces/chainlink/IChainlinkAggregator.sol";
 
-import { console } from "@forge-std/Test.sol";
-
 /**
  * @title Limit Order Registry
  * @notice Allows users to create decentralized limit orders.
