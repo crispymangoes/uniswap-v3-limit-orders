@@ -38,6 +38,7 @@ contract LimitOrderRegistryLens {
      * @notice Walks the `orderBook` in a specific `direction`, returning an array of BatchOrderViewData with length of up to `returnCount`.
      * @param pool UniswapV3 pool whose order book you want to query
      * @param startingNode the node to start walking from
+     *        - Non zero startingNode should be in the linked list, otherwise return value is wrong.
      * @param returnCount the max number of values in return array
      * @param direction to walk the order book
      */
@@ -77,6 +78,7 @@ contract LimitOrderRegistryLens {
      * @param pool the Uniswap V3 pool you want to create an order in
      * @param startingNode the UniV3 position Id to start looking
      * @param targetTick the targetTick of the order you want to place
+     * @param direction the direction of the order
      * @return proposedHead , proposedTail pr the correct head and tail for the new order
      * @dev if both head and tail are zero, just pass in zero for the `startingNode`
      *      otherwise pass in either the nonzero head or nonzero tail for the `startingNode`
@@ -84,9 +86,10 @@ contract LimitOrderRegistryLens {
     function findSpot(
         UniswapV3Pool pool,
         uint256 startingNode,
-        int24 targetTick
+        int24 targetTick,
+        bool direction
     ) external view returns (uint256 proposedHead, uint256 proposedTail) {
-        (proposedHead, proposedTail) = registry.findSpot(pool, startingNode, targetTick);
+        (proposedHead, proposedTail) = registry.findSpot(pool, startingNode, targetTick, direction);
     }
 
     /**

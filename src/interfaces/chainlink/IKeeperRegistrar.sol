@@ -48,4 +48,6 @@ interface IKeeperRegistrar {
     ) external;
 
     function registerUpkeep(RegistrationParams calldata requestParams) external returns (uint256);
+
+    function typeAndVersion() external view returns (string memory);
 }

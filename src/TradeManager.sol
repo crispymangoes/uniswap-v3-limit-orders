@@ -61,6 +61,7 @@ contract TradeManager is Initializable, AutomationCompatibleInterface, Owned {
 
     /**
      * @notice The max amount of claims that can happen in a single upkeep.
+     * @dev When changing this value also change line 260, abi.decode.
      */
     uint256 public constant MAX_CLAIMS = 10;
 
@@ -71,6 +72,12 @@ contract TradeManager is Initializable, AutomationCompatibleInterface, Owned {
      *         -false leave tokens in the trade manager
      */
     bool public claimToOwner;
+
+    /**
+     * @notice Function selector used to create V1 Upkeep versions.
+     */
+    bytes4 private constant FUNC_SELECTOR =
+        bytes4(keccak256("register(string,bytes,address,uint32,address,bytes,uint96,uint8,address)"));
 
     constructor() Owned(address(0)) {}
 
@@ -98,19 +105,38 @@ contract TradeManager is Initializable, AutomationCompatibleInterface, Owned {
 
         // Create a new upkeep.
         if (initialUpkeepFunds > 0) {
+            // Owner wants to automatically create an upkeep for new pool.
             ERC20(address(LINK)).safeTransferFrom(msg.sender, address(this), initialUpkeepFunds);
-            ERC20(address(LINK)).safeApprove(address(registrar), initialUpkeepFunds);
-            RegistrationParams memory params = RegistrationParams({
-                name: "Trade Manager",
-                encryptedEmail: abi.encode(0),
-                upkeepContract: address(this),
-                gasLimit: UPKEEP_GAS_LIMIT,
-                adminAddress: user,
-                checkData: abi.encode(0),
-                offchainConfig: abi.encode(0),
-                amount: uint96(initialUpkeepFunds)
-            });
-            registrar.registerUpkeep(params);
+            if (bytes(registrar.typeAndVersion())[16] == bytes("1")[0]) {
+                // Use V1 Upkeep Registration.
+                bytes memory data = abi.encodeWithSelector(
+                    FUNC_SELECTOR,
+                    "Trade Manager",
+                    abi.encode(0),
+                    address(this),
+                    UPKEEP_GAS_LIMIT,
+                    user,
+                    abi.encode(0),
+                    uint96(initialUpkeepFunds),
+                    77,
+                    address(this)
+                );
+                LINK.transferAndCall(address(registrar), initialUpkeepFunds, data);
+            } else {
+                // Use V2 Upkeep Registration.
+                ERC20(address(LINK)).safeApprove(address(registrar), initialUpkeepFunds);
+                RegistrationParams memory params = RegistrationParams({
+                    name: "Trade Manager",
+                    encryptedEmail: abi.encode(0),
+                    upkeepContract: address(this),
+                    gasLimit: UPKEEP_GAS_LIMIT,
+                    adminAddress: user,
+                    checkData: abi.encode(0),
+                    offchainConfig: abi.encode(0),
+                    amount: uint96(initialUpkeepFunds)
+                });
+                registrar.registerUpkeep(params);
+            }
         }
     }
 
@@ -134,25 +160,27 @@ contract TradeManager is Initializable, AutomationCompatibleInterface, Owned {
         int24 targetTick,
         uint128 amount,
         bool direction,
-        uint256 startingNode
+        uint256 startingNode,
+        uint256 deadline
     ) external onlyOwner {
         uint256 managerBalance = assetIn.balanceOf(address(this));
         // If manager lacks funds, transfer delta into manager.
         if (managerBalance < amount) assetIn.safeTransferFrom(msg.sender, address(this), amount - managerBalance);
 
         assetIn.safeApprove(address(limitOrderRegistry), amount);
-        uint128 batchId = limitOrderRegistry.newOrder(pool, targetTick, amount, direction, startingNode);
+        uint128 batchId = limitOrderRegistry.newOrder(pool, targetTick, amount, direction, startingNode, deadline);
         ownerOrders.add(batchId);
     }
 
     /**
      * @notice See `LimitOrderRegistry.sol:cancelOrder`.
      */
-    function cancelOrder(UniswapV3Pool pool, int24 targetTick, bool direction) external onlyOwner {
+    function cancelOrder(UniswapV3Pool pool, int24 targetTick, bool direction, uint256 deadline) external onlyOwner {
         (uint128 amount0, uint128 amount1, uint128 batchId) = limitOrderRegistry.cancelOrder(
             pool,
             targetTick,
-            direction
+            direction,
+            deadline
         );
         if (amount0 > 0) ERC20(pool.token0()).safeTransfer(owner, amount0);
         if (amount1 > 0) ERC20(pool.token1()).safeTransfer(owner, amount1);
@@ -232,7 +260,7 @@ contract TradeManager is Initializable, AutomationCompatibleInterface, Owned {
     function performUpkeep(bytes calldata performData) external {
         // Accept claim array and claim all orders
         ClaimInfo[MAX_CLAIMS] memory claimInfo = abi.decode(performData, (ClaimInfo[10]));
-        for (uint256 i; i < 10; ++i) {
+        for (uint256 i; i < MAX_CLAIMS; ++i) {
             if (limitOrderRegistry.isOrderReadyForClaim(claimInfo[i].batchId)) {
                 (ERC20 asset, uint256 assets) = limitOrderRegistry.claimOrder{ value: claimInfo[i].fee }(
                     claimInfo[i].batchId,
