@@ -74,10 +74,15 @@ contract TradeManager is Initializable, AutomationCompatibleInterface, Owned {
     bool public claimToOwner;
 
     /**
+     * @notice Function signature used to create V1 Upkeep versions.
+     */
+    string private constant FUNC_SIGNATURE = "register(string,bytes,address,uint32,address,bytes,uint96,uint8,address)";
+
+    /**
      * @notice Function selector used to create V1 Upkeep versions.
      */
-    bytes4 private constant FUNC_SELECTOR =
-        bytes4(keccak256("register(string,bytes,address,uint32,address,bytes,uint96,uint8,address)"));
+    bytes4 private constant FUNC_SELECTOR =  bytes4(keccak256(bytes(FUNC_SIGNATURE)));
+
 
     constructor() Owned(address(0)) {}
 
@@ -167,8 +172,11 @@ contract TradeManager is Initializable, AutomationCompatibleInterface, Owned {
         // If manager lacks funds, transfer delta into manager.
         if (managerBalance < amount) assetIn.safeTransferFrom(msg.sender, address(this), amount - managerBalance);
 
+        // grant approval to the limit order registry
         assetIn.safeApprove(address(limitOrderRegistry), amount);
+        // create the order itself, fund moving in here if needed.
         uint128 batchId = limitOrderRegistry.newOrder(pool, targetTick, amount, direction, startingNode, deadline);
+        // add the batch id to the owners orders so that they can claim later
         ownerOrders.add(batchId);
     }
 
@@ -272,6 +280,8 @@ contract TradeManager is Initializable, AutomationCompatibleInterface, Owned {
         }
     }
 
+    // @notice get batch ids for the owner of the manager
+    // @return an array of ids
     function getOwnerBatchIds() external view returns (uint256[] memory ids) {
         ids = new uint256[](ownerOrders.length());
         for (uint256 i; i < ids.length; ++i) ids[i] = ownerOrders.at(i);
