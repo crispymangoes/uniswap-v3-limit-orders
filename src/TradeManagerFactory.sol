@@ -51,13 +51,18 @@ contract TradeManagerFactory {
         IKeeperRegistrar registrar,
         uint256 initialUpkeepFunds
     ) external returns (TradeManager manager) {
+        // create a payable clone of the implementation
         address payable clone = payable(implementation.clone());
+        // if there are upkeep funds, do the transfer and approval for upkeeps
         if (initialUpkeepFunds > 0) {
             ERC20(address(LINK)).safeTransferFrom(msg.sender, address(this), initialUpkeepFunds);
             ERC20(address(LINK)).safeApprove(clone, initialUpkeepFunds);
         }
+        // initialize the manager with the TradeManager ABI
         manager = TradeManager(clone);
+        // initialize the manager
         manager.initialize(msg.sender, _limitOrderRegistry, LINK, registrar, initialUpkeepFunds);
+        // create the manager
         emit ManagerCreated(address(manager));
     }
 }

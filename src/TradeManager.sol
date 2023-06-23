@@ -74,10 +74,15 @@ contract TradeManager is Initializable, AutomationCompatibleInterface, Owned {
     bool public claimToOwner;
 
     /**
+     * @notice Function signature used to create V1 Upkeep versions.
+     */
+    string private constant FUNC_SIGNATURE = "register(string,bytes,address,uint32,address,bytes,uint96,uint8,address)";
+
+    /**
      * @notice Function selector used to create V1 Upkeep versions.
      */
-    bytes4 private constant FUNC_SELECTOR =
-        bytes4(keccak256("register(string,bytes,address,uint32,address,bytes,uint96,uint8,address)"));
+    bytes4 private constant FUNC_SELECTOR =  bytes4(keccak256(bytes(FUNC_SIGNATURE)));
+
 
     constructor() Owned(address(0)) {}
 
