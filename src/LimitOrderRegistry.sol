@@ -445,7 +445,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     /**
      * @notice Allows owner to set the minimum assets used to create `newOrder`s.
      * @param amount the amount to set minimum assets for the token to
-     * @param assset the erc20 token address to set minimum assets for
+     * @param asset the erc20 token address to set minimum assets for
      * @dev This value can be zero, but then this contract can be griefed by an attacker spamming low liquidity orders.
      */
     function setMinimumAssets(uint256 amount, ERC20 asset) external onlyOwner {
@@ -868,7 +868,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
 
     /**
      * @notice Returned `performData` simply contains a bool indicating which direction in the `orderBook` has orders that need to be fulfilled.
-     * @param bytes checkData the data to decode when calling this from automation
+     * @param checkData the data to decode when calling this from automation
      */
     function checkUpkeep(bytes calldata checkData) external view returns (bool upkeepNeeded, bytes memory performData) {
         UniswapV3Pool pool = abi.decode(checkData, (UniswapV3Pool));
@@ -907,7 +907,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
 
     /**
      * @notice Callable by anyone, as long as there are orders ITM, that need to be fulfilled.
-    * @param bytes checkData the data to decode when calling this from automation
+     * @param performData checkData the data to decode when calling this from automation
      * @dev Does not use _removeOrderFromList, so that the center head/tail
      *      value is not updated every single time and order is fulfilled, instead we just update it once at the end.
      */
@@ -1516,7 +1516,7 @@ contract LimitOrderRegistry is Owned, AutomationCompatibleInterface, ERC721Holde
     }
 /**
      * @notice Helper function to get claim
-     * @param id the id to get info for
+     * @param batchId the id to get info for
      * @return Claim the claim info at id
     */
     function getClaim(uint128 batchId) external view returns (Claim memory) {
